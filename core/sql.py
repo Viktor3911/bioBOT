@@ -7,7 +7,8 @@ from typing import Any, Dict, Optional, overload
 from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.base import StorageKey, StateType
 
-from core.config import PG_DBNAME, PG_FSM_DBNAME, PG_HOST, PG_USER, PG_PORT, PG_PASSWORD
+from core.config import PG_DBNAME, PG_FSM_DBNAME, PG_HOST, PG_USER, PG_PORT
+from core.settings import PG_PASSWORD
 
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(levelname)s - %(message)s', )
@@ -325,7 +326,7 @@ class DatabaseManager:
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Users\" (
-                id INTEGER PRIMARY KEY,
+                id BIGINT PRIMARY KEY,
                 id_role INTEGER,
                 id_chief INTEGER,
                 fio TEXT,
@@ -368,7 +369,7 @@ class DatabaseManager:
                 assistants TEXT,
                 start_date TIMESTAMP,
                 end_date TIMESTAMP,
-                FOREIGN KEY (id_task) REFERENCES \"StandartTask\"(id)
+                FOREIGN KEY (id_task) REFERENCES \"StandartTasks\"(id)
             )
             """,
         ]

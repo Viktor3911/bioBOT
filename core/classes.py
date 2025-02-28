@@ -61,7 +61,7 @@ class User:
         """Обновляет данные пользователя в БД."""
         if not User.get_by_id(self.id): # Проверяем, существует ли запись перед обновлением
             raise RecordNotFoundError(f"Пользователь с ID {self.id} не найден.")
-        if not dependencies.db_manager.update(User.table, User.columns,
+        if not dependencies.db_manager.update(User.table, User.columns[1:],
                                       [self.id_role, self.id_chief, self.fio, self.active], # id нельзя менять, обновляем остальные поля
                                       condition_columns=['id'], condition_values=[self.id]):
             raise DatabaseError(f"Ошибка при обновлении пользователя с ID {self.id} в БД.")
@@ -88,6 +88,17 @@ class User:
     def get_all() -> List['User']:
         """Получает всех пользователей."""
         records = dependencies.db_manager.find_records(table_name=User.table, multiple=True)
+        return [User(**record) for record in records] if records else []
+
+    @staticmethod
+    def get_all_directors() -> List['User']:
+        """Получает всех пользователей с ролью 'директор'."""
+        records = dependencies.db_manager.find_records(
+            table_name=User.table,
+            search_columns=['id_role'],
+            search_values=[User.ROLE_DIRECTOR],
+            multiple=True
+        )
         return [User(**record) for record in records] if records else []
 
     @staticmethod

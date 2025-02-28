@@ -27,7 +27,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     user = User.get_by_id(user_id)
 
-    if user:
+    if user.fio:
         await message.answer(f"Привет, {user.fio}! Вы уже зарегистрированы.")
     else:
         await state.set_state(RegistrationState.waiting_for_fio)
