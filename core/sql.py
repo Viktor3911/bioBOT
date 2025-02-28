@@ -318,73 +318,57 @@ class DatabaseManager:
         """Создает таблицы в базе данных."""
         create_tables_sql = [
             """
-            CREATE TABLE IF NOT EXISTS \"Companies\" (
-                id SERIAL PRIMARY KEY,
-                name TEXT,
-                link_directors TEXT,
-                link_workers TEXT,
-                statuses TEXT
-            )
-            """,
-            """
             CREATE TABLE IF NOT EXISTS \"Roles\" (
                 id INTEGER PRIMARY KEY,
                 name TEXT
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS \"LinkAdmins\" (
-                id SERIAL PRIMARY KEY,
-                link_admins TEXT UNIQUE
-            )
-            """,
-            """
             CREATE TABLE IF NOT EXISTS \"Users\" (
+                id INTEGER PRIMARY KEY,
                 id_role INTEGER,
-                id BIGINT PRIMARY KEY,
-                id_company INTEGER,
                 fio TEXT,
-                phone_number TEXT,
                 active BOOLEAN,
-                FOREIGN KEY (id_role) REFERENCES \"Roles\"(id),
-                FOREIGN KEY (id_company) REFERENCES \"Companies\"(id)
+                FOREIGN KEY (id_role) REFERENCES \"Roles\"(id)
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS \"Orders\" (
-                id INTEGER,
-                id_company INTEGER,
-                cost REAL,
-                workers TEXT,
-                man_hours REAL,
-                PRIMARY KEY (id, id_company),
-                FOREIGN KEY (id_company) REFERENCES \"Companies\"(id)
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS \"Cheques\" (
+            CREATE TABLE IF NOT EXISTS \"Cabinets\" (
                 id SERIAL PRIMARY KEY,
-                id_order INTEGER,
-                id_company INTEGER,
-                json TEXT,
-                datetime TEXT,
-                id_user BIGINT,
-                FOREIGN KEY (id_order, id_company) REFERENCES \"Orders\"(id, id_company),
-                FOREIGN KEY (id_company) REFERENCES \"Companies\"(id)
+                name TEXT,
+                active BOOLEAN
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS \"StatusHistory\" (
+            CREATE TABLE IF NOT EXISTS \"Devices\" (
                 id SERIAL PRIMARY KEY,
-                id_order INTEGER,
-                id_company INTEGER,
-                status TEXT,
-                datetime TEXT,
-                id_user BIGINT,
-                FOREIGN KEY (id_order, id_company) REFERENCES \"Orders\"(id, id_company),
-                FOREIGN KEY (id_company) REFERENCES \"Companies\"(id)
+                id_cabinet INTEGER,
+                name TEXT,
+                active BOOLEAN,
+                FOREIGN KEY (id_cabinet) REFERENCES \"Cabinets\"(id)
             )
+            """,
             """
+            CREATE TABLE IF NOT EXISTS \"StandartTask\" (
+                id SERIAL PRIMARY KEY,
+                id_cabinet INTEGER,
+                id_device INTEGER,
+                is_parallel BOOLEAN,
+                time DATE,
+                FOREIGN KEY (id_cabinet) REFERENCES \"Cabinets\"(id),
+                FOREIGN KEY (id_device) REFERENCES \"Devices\"(id)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS \"Reservations\" (
+                id SERIAL PRIMARY KEY,
+                id_task INTEGER,
+                assistants TEXT,
+                start_date TIMESTAMP,
+                end_date TIMESTAMP,
+                FOREIGN KEY (id_task) REFERENCES \"StandartTask\"(id)
+            )
+            """,
         ]
 
         conn = self._connect()

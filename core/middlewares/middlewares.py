@@ -2,7 +2,7 @@ from typing import Any, Awaitable, Callable, Dict
 from aiogram import BaseMiddleware
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.types import TelegramObject, Update
-from core.utils.context import CustomFSMContext
+from core.middlewares.context import CustomFSMContext
 from core.sql import PostgreSQLStorage
 
 class CustomFSMContextMiddleware(BaseMiddleware):
