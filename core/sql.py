@@ -327,6 +327,7 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS \"Users\" (
                 id INTEGER PRIMARY KEY,
                 id_role INTEGER,
+                id_chief INTEGER,
                 fio TEXT,
                 active BOOLEAN,
                 FOREIGN KEY (id_role) REFERENCES \"Roles\"(id)
@@ -353,6 +354,7 @@ class DatabaseManager:
                 id SERIAL PRIMARY KEY,
                 id_cabinet INTEGER,
                 id_device INTEGER,
+                name TEXT,
                 is_parallel BOOLEAN,
                 time DATE,
                 FOREIGN KEY (id_cabinet) REFERENCES \"Cabinets\"(id),
