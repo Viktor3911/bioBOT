@@ -350,7 +350,7 @@ class DatabaseManager:
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS \"StandartTask\" (
+            CREATE TABLE IF NOT EXISTS \"StandartTasks\" (
                 id SERIAL PRIMARY KEY,
                 id_cabinet INTEGER,
                 id_device INTEGER,
@@ -379,7 +379,7 @@ class DatabaseManager:
                 for sql in create_tables_sql:
                     cursor.execute(sql)
                 conn.commit()
-            logging.info("Таблицы mini1c успешно созданы в PostgreSQL.")
+            logging.info("Таблицы bio успешно созданы в PostgreSQL.")
         except psycopg2.Error as e:
             logging.error(f"Ошибка при создании таблиц PostgreSQL: {e}")
         finally:
