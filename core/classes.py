@@ -8,7 +8,6 @@ import time
 import logging
 from core.utils import dependencies
 import psycopg2
-import psycopg2.extras
 
 logging.basicConfig(level=logging.INFO)
 
@@ -177,25 +176,25 @@ class Cabinet:
 
 class Device:
     table = "Devices"
-    columns = ['id_device', 'name_cabinet', 'name', 'active']
+    columns = ['type_device', 'name_cabinet', 'name', 'active']
 
     def __init__(
         self,
+        type_device: int,
         name_cabinet: str, # name_cabinet теперь обязательный параметр
-        id_device: int,
         name: str = None,
         active: bool = True,
         id: int = None # id может быть None при создании нового устройства
     ):
+        self.type_device: Optional[int] = type_device # может быть None
+        self.id: Optional[int] = id # id может быть None
         self.name_cabinet: str = name_cabinet
         self.name: Optional[str] = name
         self.active: bool = active
-        self.id: Optional[int] = id # id может быть None
-        self.id_device: Optional[int] = id_device # может быть None
 
     def add(self) -> Optional[int]: # Возвращаем ID добавленного устройства
         """Добавляет устройство в БД."""
-        if dependencies.db_manager.insert(Device.table, Device.columns, [self.id_device, self.name_cabinet, self.name, self.active]) is None:
+        if dependencies.db_manager.insert(Device.table, Device.columns, [self.type_device, self.name_cabinet, self.name, self.active]) is None:
             raise DatabaseError("Ошибка при добавлении устройства в БД.")
         
         # Получаем ID последней добавленной записи с таким же именем
@@ -212,15 +211,32 @@ class Device:
         if not Device.get_by_id(self.id):
             raise RecordNotFoundError(f"Устройство с ID {self.id} не найдено.")
         if not dependencies.db_manager.update(Device.table, Device.columns,
-                                      [self.id_device, self.name_cabinet, self.name, self.active], # Обновляем только name_cabinet, name, active
+                                      [self.type_device, self.name_cabinet, self.name, self.active], # Обновляем только name_cabinet, name, active
                                       condition_columns=['id'], condition_values=[self.id]):
             raise DatabaseError(f"Ошибка при обновлении устройства с ID {self.id} в БД.")
         return True
 
     @staticmethod
-    def get_by_id(device_id: int) -> Optional['Device']:
+    def count_device_types() -> int:
+        """Подсчитывает количество уникальных type_device в таблице Devices."""
+        query = "SELECT COUNT(DISTINCT type_device) FROM \"Devices\""
+        record = dependencies.db_manager.find_records(table_name=Device.table, custom_query=query)
+        if record and record['count'] is not None: # 'count' - имя столбца, возвращаемого COUNT()
+            return record['count']
+        return 0
+    
+    @staticmethod
+    def get_by_id(id_device: int) -> Optional['Device']:
         """Получает устройство по ID."""
-        data = dependencies.db_manager.find_records(table_name=Device.table, search_columns=['id'], search_values=[device_id])
+        data = dependencies.db_manager.find_records(table_name=Device.table, search_columns=['id'], search_values=[id_device])
+        if data:
+            return Device(**data)
+        return None
+    
+    @staticmethod
+    def get_by_type_device(type_device: int) -> Optional['Device']:
+        """Получает устройство по ID."""
+        data = dependencies.db_manager.find_records(table_name=Device.table, search_columns=['type_device'], search_values=[type_device])
         if data:
             return Device(**data)
         return None
@@ -264,26 +280,23 @@ class Device:
 
 class StandartTask:
     table = "StandartTasks"
-    columns = ['name', 'name_cabinet', 'id_device', 'is_parallel', 'time']
+    columns = ['name', 'type_device', 'is_parallel', 'time_task']
 
     def __init__(
         self,
         name: str,
-        name_cabinet: str,
-        id_device: int,
+        type_device: int,
         is_parallel: bool = True,
         time_task: timedelta = None, # Изменили тип на timedelta
     ):
         if not isinstance(name, str):
             raise ValueError(f"Название задачи '{name}' должно быть строкой.")
-        if not isinstance(name_cabinet, str):
-            raise ValueError(f"Имя кабинета '{name_cabinet}' должно быть строкой.")
-        if not isinstance(id_device, int):
-            raise ValueError(f"ID устройства '{id_device}' должен быть целым числом.")
+
+        if not isinstance(type_device, int):
+            raise ValueError(f"ID устройства '{type_device}' должен быть целым числом.")
 
         self.name: str = name
-        self.name_cabinet: str = name_cabinet
-        self.id_device: int = id_device
+        self.type_device: int = type_device
         self.is_parallel: bool = is_parallel
         self.time_task: timedelta = time_task # Сохраняем время как timedelta
 
@@ -291,7 +304,7 @@ class StandartTask:
         """Добавляет стандартную задачу в БД."""
         if StandartTask.get_by_name(self.name): # Проверяем, существует ли задача с таким именем
             raise DuplicateRecordError(f"Стандартная задача с именем '{self.name}' уже существует.")
-        if dependencies.db_manager.insert(StandartTask.table, StandartTask.columns, [self.name, self.name_cabinet, self.id_device, self.is_parallel, self.time_task]) is None:
+        if dependencies.db_manager.insert(StandartTask.table, StandartTask.columns, [self.name, self.type_device, self.is_parallel, self.time_task]) is None:
             raise DatabaseError("Ошибка при добавлении стандартной задачи в БД.")
         return True # Или можно вернуть None, так как id не генерируется
 
@@ -300,8 +313,8 @@ class StandartTask:
         if not StandartTask.get_by_name(self.name): # Ищем задачу по имени (PK)
             raise RecordNotFoundError(f"Стандартная задача с именем '{self.name}' не найдена.")
         if not dependencies.db_manager.update(StandartTask.table,
-                                      ['name_cabinet', 'id_device', 'is_parallel', 'time_task'], # Обновляем все поля, кроме name (PK)
-                                      [self.name_cabinet, self.id_device, self.is_parallel, self.time_task],
+                                      ['type_device', 'is_parallel', 'time_task'], # Обновляем все поля, кроме name (PK)
+                                      [self.type_device, self.is_parallel, self.time_task],
                                       condition_columns=['name'], condition_values=[self.name]): # Условие поиска по имени
             raise DatabaseError(f"Ошибка при обновлении стандартной задачи с именем '{self.name}' в БД.")
         return True
@@ -328,25 +341,15 @@ class StandartTask:
         return [StandartTask(**record) for record in records] if records else []
 
     @staticmethod
-    def find_by_name_cabinet(name_cabinet: str) -> List['StandartTask']:
-        """Находит стандартные задачи по имени кабинета."""
-        records = dependencies.db_manager.find_records(table_name=StandartTask.table, search_columns=['name_cabinet'], search_values=[name_cabinet], multiple=True)
-        for record in records:
-            if record['time_task']:
-                interval_val = record['time_task'] # Получаем объект psycopg2.extras.Interval
-                record['time_task'] = timedelta(seconds=interval_val.total_seconds()) # Создаем timedelta из компонентов INTERVAL            tasks.append(StandartTask(**record))
-        return [StandartTask(**record) for record in records] if records else []
-
-    @staticmethod
-    def find_by_device_id(id_device: int) -> List['StandartTask']:
+    def find_by_type_device(type_device: int) -> List['StandartTask']:
         """Находит стандартные задачи по ID устройства."""
-        records = dependencies.db_manager.find_records(table_name=StandartTask.table, search_columns=['id_device'], search_values=[id_device], multiple=True)
+        records = dependencies.db_manager.find_records(table_name=StandartTask.table, search_columns=['type_device'], search_values=[type_device], multiple=True)
         return [StandartTask(**record) for record in records] if records else []
 
     @staticmethod
-    def find_by_cabinet_and_device_id(name_cabinet: str, id_device: int) -> List['StandartTask']:
+    def find_by_cabinet_and_type_device(name_cabinet: str, type_device: int) -> List['StandartTask']:
         """Находит стандартные задачи по имени кабинета и ID устройства."""
-        records = dependencies.db_manager.find_records(table_name=StandartTask.table, search_columns=['name_cabinet', 'id_device'], search_values=[name_cabinet, id_device], multiple=True)
+        records = dependencies.db_manager.find_records(table_name=StandartTask.table, search_columns=['type_device'], search_values=[name_cabinet, type_device], multiple=True)
         tasks = []
         for record in records:
             if record['time_task']:
@@ -358,31 +361,46 @@ class StandartTask:
 
 class Reservation:
     table = "Reservations"
-    columns = ['name_task', 'assistants', 'start_date', 'end_date'] # id - SERIAL, name_task - TEXT FK
+    # id SERIAL PRIMARY KEY, number_protocol INTEGER, type_protocol TEXT, name_task TEXT, assistants JSONB, start_date TIMESTAMP, end_date TIMESTAMP, active BOOLEAN, FOREIGN KEY (type_protocol) REFERENCES "Protocols"(name), FOREIGN KEY (name_task) REFERENCES "StandartTasks"(name)
+    columns = ['number_protocol', 'type_protocol', 'name_task', 'assistants', 'start_date', 'end_date', 'active'] # removed 'id', added 'number_protocol', 'type_protocol', 'active'
 
     def __init__(
         self,
+        type_protocol: str, # added, not optional, renamed from type_protocol to type_protocol
         name_task: str, # name_task теперь обязательный параметр и FK
-        assistants: str = None,
+        assistants: List[int] = None, # Изменено на List[int] и Optional
         start_date: datetime = None, # Тип datetime
         end_date: datetime = None,   # Тип datetime
+        active: bool = True, # added, default True
+        number_protocol: int = None, # added and Optional, will be generated in add()
         id: int = None # id может быть None при создании новой резервации
     ):
         if not isinstance(name_task, str):
             raise ValueError(f"Название задачи '{name_task}' должно быть строкой.")
+        if not isinstance(type_protocol, str): # added check for type_protocol
+            raise ValueError(f"Тип протокола '{type_protocol}' должен быть строкой.")
+
         self.id: Optional[int] = id # id может быть None
+        self.number_protocol: Optional[int] = number_protocol # added and Optional
+        self.type_protocol: str = type_protocol # added, renamed from type_protocol to type_protocol
         self.name_task: str = name_task
-        self.assistants: Optional[str] = assistants
+        self.assistants: Optional[List[int]] = assistants if assistants is not None else [] # Изменено на List[int] и инициализация пустым списком
         self.start_date: Optional[datetime] = start_date
         self.end_date: Optional[datetime] = end_date
+        self.active: bool = active # added
 
-    def add(self) -> Optional[int]: # Возвращаем ID добавленной резервации
+    def add(self, next_protocol_number) -> Optional[int]: # Возвращаем ID добавленной резервации
         """Добавляет резервацию в БД."""
+        # Получаем следующий номер протокола
+        self.number_protocol = next_protocol_number # Устанавливаем number_protocol перед вставкой
+
+        assistants_json = json.dumps(self.assistants) # Сериализация списка assistants в JSON строку
+
         if dependencies.db_manager.insert(Reservation.table, Reservation.columns,
-                                          [self.name_task, self.assistants, self.start_date, self.end_date]) is None:
+                                          [self.number_protocol, self.type_protocol, self.name_task, assistants_json, self.start_date, self.end_date, self.active]) is None: # Используем assistants_json для вставки
             raise DatabaseError("Ошибка при добавлении резервации в БД.")
-        # Получаем ID добавленной записи (SERIAL PRIMARY KEY) - самый простой способ через поиск по name_task, start_date и end_date
-        reservation = Reservation.find_by_task_name_dates(self.name_task, self.start_date, self.end_date)
+        # Получаем ID добавленной записи (SERIAL PRIMARY KEY) - самый простой способ через поиск по сгенерированному number_protocol, type_protocol, name_task, start_date и end_date
+        reservation = Reservation.find_by_protocol_task_dates(self.number_protocol, self.type_protocol, self.name_task, self.start_date, self.end_date) # added self.number_protocol
         if reservation:
             return reservation.id
         else:
@@ -393,8 +411,9 @@ class Reservation:
         """Обновляет данные резервации в БД."""
         if not Reservation.get_by_id(self.id):
             raise RecordNotFoundError(f"Резервация с ID {self.id} не найдена.")
-        if not dependencies.db_manager.update(Reservation.table, columns=['name_task', 'assistants', 'start_date', 'end_date'], # Обновляем все поля
-                                      values=[self.name_task, self.assistants, self.start_date, self.end_date],
+        assistants_json = json.dumps(self.assistants) # Сериализация списка assistants в JSON строку
+        if not dependencies.db_manager.update(Reservation.table, columns=['number_protocol', 'type_protocol', 'name_task', 'assistants', 'start_date', 'end_date', 'active'], # Обновляем все поля, added 'number_protocol', 'type_protocol', 'active'
+                                      values=[self.number_protocol, self.type_protocol, self.name_task, assistants_json, self.start_date, self.end_date, self.active], # Используем assistants_json для обновления
                                       condition_columns=['id'], condition_values=[self.id]):
             raise DatabaseError(f"Ошибка при обновлении резервации с ID {self.id} в БД.")
         return True
@@ -404,31 +423,95 @@ class Reservation:
         """Получает резервацию по ID."""
         data = dependencies.db_manager.find_records(table_name=Reservation.table, search_columns=['id'], search_values=[reservation_id])
         if data:
+            if data['assistants']: # Десериализация JSON строки в список int
+                data['assistants'] = json.loads(data['assistants'])
             return Reservation(**data)
+
         return None
 
     @staticmethod
     def get_all() -> List['Reservation']:
         """Получает все резервации."""
         records = dependencies.db_manager.find_records(table_name=Reservation.table, multiple=True)
-        return [Reservation(**record) for record in records] if records else []
+        reservations = []
+        for record in records:
+            if record['assistants']: # Десериализация JSON строки в список int
+                record['assistants'] = json.loads(record['assistants'])
+            reservations.append(Reservation(**record))
+        return reservations
 
     @staticmethod
     def find_by_task_name(name_task: str) -> List['Reservation']:
         """Находит резервации по имени задачи."""
         records = dependencies.db_manager.find_records(table_name=Reservation.table, search_columns=['name_task'], search_values=[name_task], multiple=True)
-        return [Reservation(**record) for record in records] if records else []
+        reservations = []
+        for record in records:
+            if record['assistants']: # Десериализация JSON строки в список int
+                record['assistants'] = json.loads(record['assistants'])
+            reservations.append(Reservation(**record))
+        return reservations
 
     @staticmethod
-    def find_by_task_name_dates(name_task: str, start_date: datetime, end_date: datetime) -> Optional['Reservation']:
-        """Находит резервацию по имени задачи, дате начала и дате окончания."""
+    def find_by_protocol_name(type_protocol: str) -> List['Reservation']: # renamed from find_by_protocol_id to find_by_protocol_name, using type_protocol which is protocol name
+        """Находит резервации по имени протокола.""" # renamed from Находит резервации по ID протокола to Находит резервации по имени протокола
+        records = dependencies.db_manager.find_records(table_name=Reservation.table, search_columns=['type_protocol'], search_values=[type_protocol], multiple=True) # search by type_protocol which is protocol name
+        reservations = []
+        for record in records:
+            if record['assistants']: # Десериализация JSON строки в список int
+                record['assistants'] = json.loads(record['assistants'])
+            reservations.append(Reservation(**record))
+        return reservations
+
+    @staticmethod
+    def find_by_protocol_task_dates(number_protocol: int, type_protocol: str, name_task: str, start_date: datetime, end_date: datetime) -> Optional['Reservation']: # added 'number_protocol', 'type_protocol'
+        """Находит резервацию по номеру протокола, типу протокола, имени задачи, дате начала и дате окончания.""" # added 'номеру протокола, типу протокола, '
         records = dependencies.db_manager.find_records(table_name=Reservation.table,
-                                                    search_columns=['name_task', 'start_date', 'end_date'],
-                                                    search_values=[name_task, start_date, end_date],
+                                                    search_columns=['number_protocol', 'type_protocol', 'name_task', 'start_date', 'end_date'], # added 'number_protocol', 'type_protocol'
+                                                    search_values=[number_protocol, type_protocol, name_task, start_date, end_date], # added 'number_protocol', 'type_protocol'
                                                     multiple=False) # Убедитесь, что даты приводятся к строкам в нужном формате, если необходимо
         if records:
+            if records['assistants']: # Десериализация JSON строки в список int
+                records['assistants'] = json.loads(records['assistants'])
             return Reservation(**records)
         return None
+
+    @staticmethod
+    def count_protocol_numbers() -> int:
+        """Подсчитывает количество уникальных number_protocol в таблице Reservations."""
+        query = "SELECT COALESCE(MAX(number_protocol), 0) + 1 FROM \"Reservations\"" # Используем MAX вместо COUNT DISTINCT для получения следующего номера
+        record = dependencies.db_manager.find_records(table_name=Reservation.table, custom_query=query)
+        if record and record['coalesce'] is not None: # 'coalesce' - имя столбца, возвращаемого COALESCE(MAX(...), 0) + 1
+            return record['coalesce']
+        return 1 # Если таблица пуста, начинаем с номера 1
+
+    @staticmethod
+    def find_by_assistant_and_date(user_id: int, date_reservation: date = None) -> List['Reservation']:
+        """
+        Находит резервации, в которых ассистент (user_id) есть в списке assistants,
+        и фильтрует по дате начала резервации (по умолчанию - текущая дата).
+        """
+        if date_reservation is None:
+            date_reservation = date.today()
+
+        query = f"""
+            SELECT * FROM "{Reservation.table}"
+            WHERE assistants::jsonb @> %s
+              AND DATE(start_date) = %s
+        """
+        query_params = (json.dumps([user_id]), date_reservation) #  Ищем вхождение user_id как элемента массива JSONB
+
+        records = dependencies.db_manager.find_records(
+            table_name=Reservation.table,
+            custom_query=query,
+            query_params=query_params,
+            multiple=True
+        )
+        reservations = []
+        for record in records:
+            if record['assistants']: # Десериализация JSON строки в список int
+                record['assistants'] = json.loads(record['assistants'])
+            reservations.append(Reservation(**record))
+        return reservations
 
 
 class Protocol:
@@ -439,11 +522,9 @@ class Protocol:
         self,
         name: str, # name теперь обязательный параметр
         list_standart_tasks: list = None, # Список названий стандартных задач
-        id: int = None # id - SERIAL, может быть None при создании нового протокола
     ):
         if not isinstance(name, str):
             raise ValueError(f"Название протокола '{name}' должно быть строкой.")
-        self.id: Optional[int] = id # id может быть None
         self.name: str = name
         self.list_standart_tasks: Optional[list] = list_standart_tasks if list_standart_tasks is not None else [] # Инициализация пустым списком по умолчанию
 
@@ -454,23 +535,16 @@ class Protocol:
         if dependencies.db_manager.insert(Protocol.table, Protocol.columns, [self.name, json.dumps(self.list_standart_tasks)]) is None:
             raise DatabaseError("Ошибка при добавлении протокола в БД.")
 
-        # Получаем ID последней добавленной записи с таким же именем
-        last_protocol = Protocol.find_last_by_name(self.name)
-        if last_protocol:
-            self.id = last_protocol.id  # Присваиваем self.id
-            return self.id
-        else:
-            logging.error("Не удалось получить ID добавленного протокола.")
-            return None
+        return self.name
 
     def update(self):
         """Обновляет данные протокола в БД."""
-        if not Protocol.get_by_id(self.id):
-            raise RecordNotFoundError(f"Протокол с ID {self.id} не найден.")
-        if not dependencies.db_manager.update(Protocol.table, columns=['name', 'list_standart_tasks'],
-                                      values=[self.name, json.dumps(self.list_standart_tasks, ensure_ascii=False)],
-                                      condition_columns=['id'], condition_values=[self.id]):
-            raise DatabaseError(f"Ошибка при обновлении протокола с ID {self.id} в БД.")
+        if not Protocol.get_by_name(self.name):
+            raise RecordNotFoundError(f"Протокол с именем '{self.name}' не найден.")
+        if not dependencies.db_manager.update(Protocol.table, columns=['list_standart_tasks'],
+                                      values=[json.dumps(self.list_standart_tasks, ensure_ascii=False)],
+                                      condition_columns=['name'], condition_values=[self.name]):
+            raise DatabaseError(f"Ошибка при обновлении протокола с именем '{self.name}' в БД.")
         return True
 
     @staticmethod
@@ -517,6 +591,7 @@ class Protocol:
                 records['list_standart_tasks'] = json.loads(records['list_standart_tasks'])
             return Protocol(**records)
         return None
+
 
 if __name__ == '__main__':
     pass

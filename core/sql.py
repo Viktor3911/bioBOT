@@ -342,42 +342,44 @@ class DatabaseManager:
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Devices\" (
-                id SERIAL PRIMARY KEY,
-                id_device INTEGER,
+                id SERIAL,
+                type_device INTEGER,
                 name TEXT,
                 name_cabinet TEXT,
                 active BOOLEAN,
+                PRIMARY KEY (id, type_device),
                 FOREIGN KEY (name_cabinet) REFERENCES \"Cabinets\"(name)
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS \"StandartTasks\" (
                 name TEXT PRIMARY KEY,
-                id_device INTEGER,
+                type_device INTEGER,
                 is_parallel BOOLEAN,
-                time_task INTERVAL,
-                FOREIGN KEY (name_cabinet) REFERENCES \"Cabinets\"(name),
-                FOREIGN KEY (id_device) REFERENCES \"Devices\"(id_device)
+                time_task INTERVAL
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Protocols\" (
-                id SERIAL PRIMARY KEY,
-                name TEXT,
+                name TEXT PRIMARY KEY,
                 list_standart_tasks JSONB
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Reservations\" (
                 id SERIAL PRIMARY KEY,
-                id_protocol INTEGER,
+                number_protocol INTEGER,
+                type_protocol TEXT,
+
                 name_task TEXT,
                 assistants JSONB,
                 start_date TIMESTAMP,
                 end_date TIMESTAMP,
+                active BOOLEAN,
+                FOREIGN KEY (type_protocol) REFERENCES \"Protocols\"(name),
                 FOREIGN KEY (name_task) REFERENCES \"StandartTasks\"(name)
             )
-            """,
+            """
         ]
 
         conn = self._connect()
