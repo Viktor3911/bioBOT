@@ -7,7 +7,8 @@ from typing import Any, Dict, Optional, overload
 from aiogram.fsm.storage.base import BaseStorage
 from aiogram.fsm.storage.base import StorageKey, StateType
 
-from core.config import PG_DBNAME, PG_FSM_DBNAME, PG_HOST, PG_USER, PG_PORT, PG_PASSWORD
+from core.config import PG_DBNAME, PG_FSM_DBNAME, PG_HOST, PG_USER, PG_PORT
+from core.settings import PG_PASSWORD
 
 logging.basicConfig(level=logging.INFO, 
                     format='%(asctime)s - %(levelname)s - %(message)s', )
@@ -325,7 +326,7 @@ class DatabaseManager:
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Users\" (
-                id INTEGER PRIMARY KEY,
+                id BIGINT PRIMARY KEY,
                 id_role INTEGER,
                 id_chief INTEGER,
                 fio TEXT,
@@ -335,42 +336,50 @@ class DatabaseManager:
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Cabinets\" (
-                id SERIAL PRIMARY KEY,
-                name TEXT,
+                name TEXT PRIMARY KEY,
                 active BOOLEAN
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Devices\" (
-                id SERIAL PRIMARY KEY,
-                id_cabinet INTEGER,
+                id SERIAL,
+                type_device INTEGER,
                 name TEXT,
+                name_cabinet TEXT,
                 active BOOLEAN,
-                FOREIGN KEY (id_cabinet) REFERENCES \"Cabinets\"(id)
+                PRIMARY KEY (id, type_device),
+                FOREIGN KEY (name_cabinet) REFERENCES \"Cabinets\"(name)
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS \"StandartTask\" (
-                id SERIAL PRIMARY KEY,
-                id_cabinet INTEGER,
-                id_device INTEGER,
-                name TEXT,
+            CREATE TABLE IF NOT EXISTS \"StandartTasks\" (
+                name TEXT PRIMARY KEY,
+                type_device INTEGER,
                 is_parallel BOOLEAN,
-                time DATE,
-                FOREIGN KEY (id_cabinet) REFERENCES \"Cabinets\"(id),
-                FOREIGN KEY (id_device) REFERENCES \"Devices\"(id)
+                time_task INTERVAL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS \"Protocols\" (
+                name TEXT PRIMARY KEY,
+                list_standart_tasks JSONB
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Reservations\" (
                 id SERIAL PRIMARY KEY,
-                id_task INTEGER,
-                assistants TEXT,
+                number_protocol INTEGER,
+                type_protocol TEXT,
+
+                name_task TEXT,
+                assistants JSONB,
                 start_date TIMESTAMP,
                 end_date TIMESTAMP,
-                FOREIGN KEY (id_task) REFERENCES \"StandartTask\"(id)
+                active BOOLEAN,
+                FOREIGN KEY (type_protocol) REFERENCES \"Protocols\"(name),
+                FOREIGN KEY (name_task) REFERENCES \"StandartTasks\"(name)
             )
-            """,
+            """
         ]
 
         conn = self._connect()
@@ -379,7 +388,7 @@ class DatabaseManager:
                 for sql in create_tables_sql:
                     cursor.execute(sql)
                 conn.commit()
-            logging.info("Таблицы mini1c успешно созданы в PostgreSQL.")
+            logging.info("Таблицы bio успешно созданы в PostgreSQL.")
         except psycopg2.Error as e:
             logging.error(f"Ошибка при создании таблиц PostgreSQL: {e}")
         finally:
