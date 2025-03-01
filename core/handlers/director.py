@@ -13,7 +13,7 @@ import logging
 
 from core.utils import dependencies
 from core.classes import User, DatabaseError, RecordNotFoundError, DuplicateRecordError, Cabinet, Device, StandartTask, Protocol
-from core.utils.keyboards import director_keyboard # Импорт клавиатуры директора
+from core.utils.keyboards import director_keyboard, add_menu_keyboard # Импорт клавиатуры директора
 
 router = Router()
 
@@ -35,6 +35,10 @@ class DirectorState(StatesGroup):
     waiting_for_protocol_name = State()
     choosing_task_for_protocol = State() # Новое состояние - выбор задач для протокола
     protocol_creation = State() # Новое состояние - создание протокола (сбор задач)
+
+        # Добавляем состояния для расписания
+    choosing_protocol_for_schedule = State()  # Состояние выбора протокола
+    waiting_for_schedule_date = State()  # Состояние ожидания даты выполнения
 
 def is_director(user_id: int) -> bool:
     """
@@ -109,18 +113,35 @@ async def process_assistant_forward_director(message: Message, state: FSMContext
 
 
 
-
-@router.message(F.text == "Добавить кабинет")
-async def cmd_add_cabinet_director_button(message: Message, state: FSMContext):
+@router.message(F.text == "Добавить ...")
+async def cmd_show_add_menu(message: Message):
     """
-    Обработчик команды "Добавить кабинет" через ReplyKeyboard.
+    Обработчик кнопки "Добавить ...".
+    Показывает подменю с вариантами добавления.
+    """
+    await message.answer("Что вы хотите добавить?", reply_markup=add_menu_keyboard())
+
+@router.callback_query(F.data == "back_to_main")
+async def callback_back_to_main(query: CallbackQuery):
+    """
+    Обработчик кнопки "⬅ Назад" в подменю добавления.
+    Возвращает пользователя в главное меню директора.
+    """
+    await query.message.answer("Главное меню", reply_markup=director_keyboard())
+    await query.answer()
+
+@router.callback_query(F.data == "add_cabinet")
+async def cmd_add_cabinet_director_callback(query: CallbackQuery, state: FSMContext):
+    """
+    Обработчик кнопки "Добавить кабинет" из подменю "Добавить ...".
     Запрашивает у директора название кабинета.
     """
-    if not is_director(message.from_user.id): # Проверка, является ли пользователь директором (хотя кнопка видна только директорам)
-        return await message.answer("Только директора могут использовать эту команду.")
+    if not is_director(query.from_user.id):  # Проверка, является ли пользователь директором
+        return await query.message.answer("Только директора могут использовать эту команду.")
 
-    await state.set_state(DirectorState.waiting_for_cabinet_name) # Переходим в состояние ожидания названия кабинета
-    await message.answer("Введите название нового кабинета:", reply_markup=ReplyKeyboardRemove()) # Убираем клавиатуру для ввода названия
+    await state.set_state(DirectorState.waiting_for_cabinet_name)  # Переход в состояние ожидания названия кабинета
+    await query.message.answer("Введите название нового кабинета:", reply_markup=ReplyKeyboardRemove())  # Убираем клавиатуру для ввода
+    await query.answer()  # Убираем "часики" в боте
 
 
 @router.message(DirectorState.waiting_for_cabinet_name, F.text) # Обработчик ожидания названия кабинета
@@ -159,28 +180,29 @@ async def process_cabinet_name(message: Message, state: FSMContext):
 
 
 
-
-
-@router.message(F.text == "Добавить устройство")
-async def cmd_add_device_director_button(message: Message, state: FSMContext):
+@router.callback_query(F.data == "add_device")
+async def cmd_add_device_director_callback(query: CallbackQuery, state: FSMContext):
     """
-    Обработчик команды "Добавить устройство" через ReplyKeyboard.
+    Обработчик кнопки "Добавить устройство" из подменю "Добавить ...".
     Предлагает директору выбрать кабинет для устройства.
     """
-    if not is_director(message.from_user.id): # Проверка, является ли пользователь директором
-        return await message.answer("Только директора могут использовать эту команду.")
+    if not is_director(query.from_user.id):  # Проверка, является ли пользователь директором
+        return await query.message.answer("Только директора могут использовать эту команду.")
 
-    await state.set_state(DirectorState.choosing_cabinet_for_device) # Переходим в состояние выбора кабинета для устройства
-    cabinets = Cabinet.get_all() # Получаем список всех кабинетов из БД
+    await state.set_state(DirectorState.choosing_cabinet_for_device)  # Переход в состояние выбора кабинета для устройства
+    cabinets = Cabinet.get_all()  # Получаем список всех кабинетов из БД
+
     if cabinets:
         markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=c.name, callback_data=f"choose_cabinet_device_{c.name}")] # Используем name кабинета в callback_data
+            [InlineKeyboardButton(text=c.name, callback_data=f"choose_cabinet_device_{c.name}")]  # Используем имя кабинета в callback_data
             for c in cabinets
         ])
-        await message.answer("Выберите кабинет для устройства:", reply_markup=markup)
+        await query.message.edit_text("Выберите кабинет для устройства:", reply_markup=markup)  # Используем edit_text для обновления сообщения
     else:
-        await message.answer("В системе нет зарегистрированных кабинетов. Сначала добавьте кабинет.")
+        await query.message.answer("В системе нет зарегистрированных кабинетов. Сначала добавьте кабинет.")
         await state.clear()
+
+    await query.answer()  # Убираем "часики" у кнопки
 
 
 @router.callback_query(DirectorState.choosing_cabinet_for_device, F.data.startswith("choose_cabinet_device_"))
@@ -256,28 +278,29 @@ async def process_device_name(message: Message, state: FSMContext):
 
 
 
-
-@router.message(F.text == "Добавить задачу") # Обработчик на текстовую кнопку "Добавить задачу"
-async def cmd_add_task_director_button(message: Message, state: FSMContext):
+@router.callback_query(F.data == "add_task")
+async def cmd_add_task_director_callback(query: CallbackQuery, state: FSMContext):
     """
-    Обработчик команды "Добавить задачу" через ReplyKeyboard.
+    Обработчик кнопки "Добавить задачу" из подменю "Добавить ...".
     Предлагает директору выбрать кабинет для задачи.
     """
-    if not is_director(message.from_user.id): # Проверка, является ли пользователь директором
-        return await message.answer("Только директора могут использовать эту команду.")
+    if not is_director(query.from_user.id):  # Проверка, является ли пользователь директором
+        return await query.message.answer("Только директора могут использовать эту команду.")
 
-    await state.set_state(DirectorState.choosing_cabinet_for_task) # Переходим в состояние выбора кабинета для задачи
-    cabinets = Cabinet.get_all() # Получаем список всех кабинетов из БД
+    await state.set_state(DirectorState.choosing_cabinet_for_task)  # Переход в состояние выбора кабинета для задачи
+    cabinets = Cabinet.get_all()  # Получаем список всех кабинетов из БД
+
     if cabinets:
         markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=c.name, callback_data=f"choose_cabinet_task_{c.name}")] # Используем name кабинета в callback_data
+            [InlineKeyboardButton(text=c.name, callback_data=f"choose_cabinet_task_{c.name}")]  # Используем имя кабинета в callback_data
             for c in cabinets
         ])
-        await message.answer("Выберите кабинет для стандартной задачи:", reply_markup=markup)
+        await query.message.edit_text("Выберите кабинет для стандартной задачи:", reply_markup=markup)  # Обновляем сообщение
     else:
-        await message.answer("В системе нет зарегистрированных кабинетов. Сначала добавьте кабинет.")
+        await query.message.answer("В системе нет зарегистрированных кабинетов. Сначала добавьте кабинет.")
         await state.clear()
 
+    await query.answer()  # Убираем "часики" у кнопки
 
 @router.callback_query(DirectorState.choosing_cabinet_for_task, F.data.startswith("choose_cabinet_task_"))
 async def callback_choose_cabinet_for_task(query: CallbackQuery, state: FSMContext):
@@ -415,45 +438,44 @@ async def process_task_time(message: Message, state: FSMContext):
 
 
 
-
-
-
-@router.message(F.text == "Добавить протокол") # Обработчик для кнопки "Добавить протокол"
-async def cmd_add_protocol_director_button(message: Message, state: FSMContext):
+@router.callback_query(F.data == "add_protocol")
+async def cmd_add_protocol_director_callback(query: CallbackQuery, state: FSMContext):
     """
-    Обработчик команды "Добавить протокол" через ReplyKeyboard.
+    Обработчик кнопки "Добавить протокол" из подменю "Добавить ...".
     Запрашивает у директора название протокола и переходит к выбору задач.
     """
-    if not is_director(message.from_user.id): # Проверка, является ли пользователь директором
-        return await message.answer("Только директора могут использовать эту команду.")
+    if not is_director(query.from_user.id):  # Проверка, является ли пользователь директором
+        return await query.message.answer("Только директора могут использовать эту команду.")
 
-    await state.set_state(DirectorState.waiting_for_protocol_name) # Переходим в состояние ожидания названия протокола
-    await message.answer("Введите название нового протокола:", reply_markup=ReplyKeyboardRemove()) # Запрашиваем название протокола, убираем клавиатуру
+    await state.set_state(DirectorState.waiting_for_protocol_name)  # Переход в состояние ожидания названия протокола
+    await query.message.answer("Введите название нового протокола:")  # Отправляем запрос на ввод
+    await query.answer()  # Убираем "часики" у кнопки
 
 
-@router.message(DirectorState.waiting_for_protocol_name, F.text) # Обработчик ожидания названия протокола
+@router.message(DirectorState.waiting_for_protocol_name, F.text)
 async def process_protocol_name(message: Message, state: FSMContext):
     """
     Обработчик получения названия протокола от директора.
     Сохраняет название протокола в FSM context и предлагает выбрать первую задачу.
     """
     protocol_name = message.text.strip()
-    await state.update_data(protocol_name=protocol_name, protocol_tasks=[]) # Сохраняем название протокола и инициализируем список задач
-    await state.set_state(DirectorState.choosing_task_for_protocol) # Переходим к состоянию выбора задач
-    await show_tasks_for_protocol_choice(message, state) # Функция для отображения кнопок выбора задач
+    await state.update_data(protocol_name=protocol_name, protocol_tasks=[])  # Сохраняем название протокола
+    await state.set_state(DirectorState.choosing_task_for_protocol)  # Переходим к выбору задач
+    await show_tasks_for_protocol_choice(message, state)  # Вызываем функцию показа задач
 
 
 async def show_tasks_for_protocol_choice(message: Message, state: FSMContext):
     """
     Функция для отображения кнопок выбора стандартных задач для протокола.
-    Получает список всех стандартных задач из БД и формирует InlineKeyboard.
     """
-    standart_tasks = StandartTask.get_all() # Получаем список всех стандартных задач
+    standart_tasks = StandartTask.get_all()  # Получаем список всех стандартных задач
+
     if standart_tasks:
         markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=task.name, callback_data=f"choose_protocol_task_{task.name}")] # Используем name задачи в callback_data
+            [InlineKeyboardButton(text=task.name, callback_data=f"choose_protocol_task_{task.name}")]
             for task in standart_tasks
-        ] + [[InlineKeyboardButton(text="✅ Готово", callback_data="protocol_tasks_done")]]) # Кнопка "Готово"
+        ] + [[InlineKeyboardButton(text="✅ Готово", callback_data="protocol_tasks_done")]])  # Кнопка "Готово"
+
         await message.answer("Выберите задачи для протокола (по порядку, начиная с первой):", reply_markup=markup)
     else:
         await message.answer("В системе нет стандартных задач. Сначала добавьте стандартные задачи.", reply_markup=director_keyboard())
@@ -463,53 +485,54 @@ async def show_tasks_for_protocol_choice(message: Message, state: FSMContext):
 @router.callback_query(DirectorState.choosing_task_for_protocol, F.data.startswith("choose_protocol_task_"))
 async def callback_choose_task_for_protocol(query: CallbackQuery, state: FSMContext):
     """
-    Обработчик callback-запроса после выбора стандартной задачи для протокола.
-    Добавляет выбранную задачу в список задач протокола в FSM context и предлагает выбрать следующую задачу.
+    Обработчик выбора стандартной задачи для протокола.
     """
-    task_name = query.data.split("_")[3] # Извлекаем название задачи из callback_data
+    task_name = query.data.split("_")[3]  # Извлекаем название задачи из callback_data
     state_data = await state.get_data()
-    protocol_tasks = state_data.get('protocol_tasks', []) # Получаем текущий список задач протокола из FSM или пустой список
+    protocol_tasks = state_data.get('protocol_tasks', [])  # Получаем текущий список задач протокола
 
-    protocol_tasks.append(task_name) # Добавляем выбранное название задачи в список
-    await state.update_data(protocol_tasks=protocol_tasks) # Обновляем список задач в FSM
+    protocol_tasks.append(task_name)  # Добавляем задачу
+    await state.update_data(protocol_tasks=protocol_tasks)  # Обновляем список задач
 
-    await query.message.answer(f"Задача '{task_name}' добавлена в протокол. Выберите следующую задачу или нажмите '✅ Готово'.")
-    await query.answer() # Обязательно ответить на callback, чтобы убрать "часики"
+    await query.message.answer(f"Задача '{task_name}' добавлена в протокол.\nВыберите следующую задачу или нажмите '✅ Готово'.")
+    await query.answer()  # Убираем "часики"
 
 
 @router.callback_query(DirectorState.choosing_task_for_protocol, F.data == "protocol_tasks_done")
 async def callback_protocol_tasks_done(query: CallbackQuery, state: FSMContext):
     """
-    Обработчик callback-запроса после нажатия кнопки "Готово" при выборе задач для протокола.
-    Завершает создание протокола, сохраняет его в БД и очищает FSM.
+    Обработчик кнопки "Готово" после выбора задач для протокола.
     """
     state_data = await state.get_data()
     protocol_name = state_data.get('protocol_name')
     protocol_tasks = state_data.get('protocol_tasks')
 
     if not protocol_name or not protocol_tasks:
-        await query.message.answer("Ошибка: Недостаточно данных для создания протокола. Попробуйте начать процесс добавления протокола заново.")
+        await query.message.answer("Ошибка: Недостаточно данных для создания протокола. Попробуйте заново.", reply_markup=director_keyboard())
         return await state.clear()
 
     try:
-        protocol = Protocol(name=protocol_name, list_standart_tasks=protocol_tasks) # Создаем объект Protocol с названием и списком задач
-        protocol_id = protocol.add() # Добавляем протокол в БД и получаем ID
+        protocol = Protocol(name=protocol_name, list_standart_tasks=protocol_tasks)  # Создаем объект Protocol
+        protocol_id = protocol.add()  # Добавляем протокол в БД
+
         if protocol_id:
-            tasks_str = "\n".join([f"- {task_name}" for task_name in protocol_tasks]) # Формируем список задач для сообщения
-            await query.message.answer(f"Протокол '{protocol_name}' успешно создан с ID {protocol_id} и включает следующие задачи:\n{tasks_str}", reply_markup=director_keyboard()) # Сообщаем об успехе, показываем ID и список задач, возвращаем клавиатуру
+            tasks_str = "\n".join([f"- {task_name}" for task_name in protocol_tasks])  # Формируем список задач
+            await query.message.answer(f"✅ Протокол '{protocol_name}' (ID: {protocol_id}) создан!\nСостав задач:\n{tasks_str}", reply_markup=director_keyboard())
         else:
             await query.message.answer(f"Не удалось добавить протокол '{protocol_name}'. Попробуйте позже.", reply_markup=director_keyboard())
+
         await state.clear()
+
     except DuplicateRecordError:
-        await query.message.answer(f"Протокол с названием '{protocol_name}' уже существует. Пожалуйста, введите другое название.")
+        await query.message.answer(f"Протокол '{protocol_name}' уже существует. Введите другое название.", reply_markup=director_keyboard())
         await state.clear()
     except DatabaseError as e:
-        logging.error(f"Ошибка базы данных при добавлении протокола: {e}")
-        await query.message.answer("Произошла ошибка при добавлении протокола. Попробуйте позже.", reply_markup=director_keyboard())
+        logging.error(f"Ошибка БД при добавлении протокола: {e}")
+        await query.message.answer("Ошибка при создании протокола. Попробуйте позже.", reply_markup=director_keyboard())
         await state.clear()
     except ValueError as e:
         logging.error(f"Ошибка валидации данных протокола: {e}")
         await query.message.answer("Некорректные данные протокола.", reply_markup=director_keyboard())
         await state.clear()
     finally:
-        await query.answer() # Обязательно ответить на callback, чтобы убрать "часики"
+        await query.answer()  # Убираем "часики"

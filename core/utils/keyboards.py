@@ -1,4 +1,4 @@
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 
 
 def director_keyboard():
@@ -8,15 +8,27 @@ def director_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="Добавить кабинет"),
-                KeyboardButton(text="Добавить устройство"),
+                KeyboardButton(text="Добавить ...")  # Открывает подменю добавления
             ],
             [
-                KeyboardButton(text="Добавить задачу"),
-                KeyboardButton(text="Добавить протокол") # Кнопка для будущего функционала
+                KeyboardButton(text="Добавить в расписание"),
+                KeyboardButton(text="Посмотреть расписание")
             ],
         ],
-        resize_keyboard=True, # Автоматически уменьшать размер клавиатуры
-        one_time_keyboard=False # Клавиатура не исчезает после первого использования
+        resize_keyboard=True,  # Автоматически уменьшает размер клавиатуры
+        one_time_keyboard=False  # Клавиатура не исчезает после первого использования
     )
     return keyboard
+
+
+def add_menu_keyboard():
+    """
+    Создает InlineKeyboardMarkup для подменю кнопки "Добавить ...".
+    """
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Кабинет", callback_data="add_cabinet")],
+        [InlineKeyboardButton(text="Устройство", callback_data="add_device")],
+        [InlineKeyboardButton(text="Задачу", callback_data="add_task")],
+        [InlineKeyboardButton(text="Протокол", callback_data="add_protocol")],
+        [InlineKeyboardButton(text="⬅ Назад", callback_data="back_to_main")]
+    ])
