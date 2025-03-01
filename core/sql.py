@@ -336,40 +336,46 @@ class DatabaseManager:
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Cabinets\" (
-                id SERIAL PRIMARY KEY,
-                name TEXT,
+                name TEXT PRIMARY KEY,
                 active BOOLEAN
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Devices\" (
                 id SERIAL PRIMARY KEY,
-                id_cabinet INTEGER,
+                id_device INTEGER,
                 name TEXT,
+                name_cabinet TEXT,
                 active BOOLEAN,
-                FOREIGN KEY (id_cabinet) REFERENCES \"Cabinets\"(id)
+                FOREIGN KEY (name_cabinet) REFERENCES \"Cabinets\"(name)
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS \"StandartTasks\" (
-                id SERIAL PRIMARY KEY,
-                id_cabinet INTEGER,
+                name TEXT PRIMARY KEY,
                 id_device INTEGER,
-                name TEXT,
                 is_parallel BOOLEAN,
-                time DATE,
-                FOREIGN KEY (id_cabinet) REFERENCES \"Cabinets\"(id),
-                FOREIGN KEY (id_device) REFERENCES \"Devices\"(id)
+                time_task INTERVAL,
+                FOREIGN KEY (name_cabinet) REFERENCES \"Cabinets\"(name),
+                FOREIGN KEY (id_device) REFERENCES \"Devices\"(id_device)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS \"Protocols\" (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                list_standart_tasks JSONB
             )
             """,
             """
             CREATE TABLE IF NOT EXISTS \"Reservations\" (
                 id SERIAL PRIMARY KEY,
-                id_task INTEGER,
-                assistants TEXT,
+                id_protocol INTEGER,
+                name_task TEXT,
+                assistants JSONB,
                 start_date TIMESTAMP,
                 end_date TIMESTAMP,
-                FOREIGN KEY (id_task) REFERENCES \"StandartTasks\"(id)
+                FOREIGN KEY (name_task) REFERENCES \"StandartTasks\"(name)
             )
             """,
         ]
