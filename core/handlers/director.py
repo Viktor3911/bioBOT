@@ -161,7 +161,6 @@ async def process_cabinet_name(message: Message, state: FSMContext):
 
 
 
-
 @router.message(F.text == "Добавить устройство")
 async def cmd_add_device_director_button(message: Message, state: FSMContext):
     """
@@ -217,12 +216,25 @@ async def process_device_name(message: Message, state: FSMContext):
             await message.answer(f"Кабинет с названием '{chosen_cabinet_name}' не найден в базе данных. Попробуйте выбрать кабинет заново.")
             return await state.clear()
 
-        device = Device(id_device=, name_cabinet=cabinet.name, name=device_name) # Создаем объект Device, используя ID кабинета
-        device.add() # Добавляем устройство в БД
-        await message.answer(f"Устройство '{device_name}' с ID {device.id} успешно добавлено в кабинет '{chosen_cabinet_name}'.", reply_markup=director_keyboard()) # Сообщаем об успехе и возвращаем клавиатуру директора
-        await state.clear()
-    except DuplicateRecordError: # Обработка ошибки, если устройство с таким ID уже существует
-        await message.answer(f"Устройство с ID {device.id} уже существует. Попробуйте другое ID или обратитесь к администратору.")
+        # Получаем количество типов устройств, чтобы определить id_device для нового устройства
+        # Следующий ID типа устройства будет равен текущему количеству
+        next_device_id = Device.count_device_types() + 1
+
+        # Проверяем, не существует ли уже устройство с таким именем в этом кабинете
+        existing_device = Device.find_last_by_name(device_name)
+        if existing_device:
+            await message.answer(f"Устройство с названием '{device_name}' уже существует в кабинете '{chosen_cabinet_name}'. Будет добавлено еще один экземпляр прибора.")
+            next_device_id = existing_device.type_device
+
+
+        device = Device(type_device=next_device_id, name_cabinet=chosen_cabinet_name, name=device_name) # Создаем объект Device, используя name_cabinet и name
+        added_device_id = device.add() # Добавляем устройство в БД и получаем сгенерированный ID
+
+        if added_device_id:
+            await message.answer(f"Устройство '{device_name}' (тип ID Device: {next_device_id}, ID в базе данных: {added_device_id}) успешно добавлено в кабинет '{chosen_cabinet_name}'.", reply_markup=director_keyboard()) # Сообщаем об успехе и возвращаем клавиатуру директора
+        else:
+            await message.answer("Не удалось добавить устройство. Произошла ошибка.", reply_markup=director_keyboard())
+
         await state.clear()
     except DatabaseError as e: # Обработка общих ошибок БД
         logging.error(f"Ошибка базы данных при добавлении устройства: {e}")
@@ -232,7 +244,6 @@ async def process_device_name(message: Message, state: FSMContext):
         logging.error(f"Ошибка валидации данных устройства: {e}")
         await message.answer("Некорректное название устройства.", reply_markup=director_keyboard())
         await state.clear()
-
 
 
 
@@ -281,7 +292,7 @@ async def callback_choose_cabinet_for_task(query: CallbackQuery, state: FSMConte
     devices = Device.find_by_name_cabinet(cabinet_name) # Получаем список устройств в выбранном кабинете
     if devices:
         markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=d.name, callback_data=f"choose_device_task_{d.id}")] # Используем ID устройства в callback_data
+            [InlineKeyboardButton(text=d.name, callback_data=f"choose_type_device_task_{d.type_device}")] # Используем ID устройства в callback_data
             for d in devices
         ])
         await query.message.answer(f"Выбран кабинет '{cabinet_name}'. Теперь выберите устройство для стандартной задачи:", reply_markup=markup)
@@ -291,14 +302,14 @@ async def callback_choose_cabinet_for_task(query: CallbackQuery, state: FSMConte
     await query.answer() # Обязательно ответить на callback, чтобы убрать "часики"
 
 
-@router.callback_query(DirectorState.choosing_device_for_task, F.data.startswith("choose_device_task_"))
-async def callback_choose_device_for_task(query: CallbackQuery, state: FSMContext):
+@router.callback_query(DirectorState.choosing_device_for_task, F.data.startswith("choose_type_device_task_"))
+async def callback_choose_type_device_for_task(query: CallbackQuery, state: FSMContext):
     """
     Обработчик callback-запроса после выбора устройства для задачи.
     Сохраняет ID выбранного устройства в FSM context и запрашивает название задачи.
     """
-    device_id = int(query.data.split("_")[3]) # Извлекаем ID устройства из callback_data
-    await state.update_data(chosen_device_id_task=device_id) # Сохраняем ID устройства в FSM
+    type_device = int(query.data.split("_")[4]) # Извлекаем ID устройства из callback_data
+    await state.update_data(chosen_type_device_task=type_device) # Сохраняем ID устройства в FSM
     await state.set_state(DirectorState.waiting_for_task_name) # Переходим к состоянию ожидания названия задачи
     await query.message.answer("Выбрано устройство. Теперь введите название стандартной задачи:", reply_markup=ReplyKeyboardRemove()) # Запрашиваем название задачи, убираем клавиатуру
     await query.answer() # Обязательно ответить на callback, чтобы убрать "часики"
@@ -345,19 +356,22 @@ async def process_task_time(message: Message, state: FSMContext):
     task_time_str = message.text.strip()
     state_data = await state.get_data()
     chosen_cabinet_name_task = state_data.get('chosen_cabinet_name_task')
-    chosen_device_id_task = state_data.get('chosen_device_id_task')
+    chosen_type_device_task = state_data.get('chosen_type_device_task')
     task_name = state_data.get('task_name')
     task_is_parallel = state_data.get('task_is_parallel')
 
-    if not chosen_cabinet_name_task or not chosen_device_id_task or not task_name:
-        await message.answer("Ошибка: Недостаточно данных для создания задачи. Попробуйте начать процесс добавления задачи заново.")
+    if not chosen_cabinet_name_task or not chosen_type_device_task or not task_name:
+        print(f'chosen_cabinet_name_task : {chosen_cabinet_name_task}')
+        print(f'chosen_type_device_task : {chosen_type_device_task}')
+        print(f'task_name : {task_name}')
+        await message.answer("Ошибка: Недостаточно данных для создания задачи. Попробуйте начать процесс добавления задачи заново.", reply_markup=director_keyboard())
         return await state.clear()
 
     try:
         cabinet = Cabinet.get_by_name(chosen_cabinet_name_task)
-        device = Device.get_by_id(chosen_device_id_task)
+        device = Device.get_by_type_device(chosen_type_device_task)
         if not cabinet or not device:
-            await message.answer("Ошибка: Кабинет или устройство не найдены в базе данных. Попробуйте выбрать кабинет и устройство заново.")
+            await message.answer("Ошибка: Кабинет или устройство не найдены в базе данных. Попробуйте выбрать кабинет и устройство заново.", reply_markup=director_keyboard())
             return await state.clear()
 
         # Парсинг времени из строки в timedelta (простой пример, можно улучшить)
@@ -372,8 +386,7 @@ async def process_task_time(message: Message, state: FSMContext):
 
         standart_task = StandartTask(
             name=task_name,
-            name_cabinet=cabinet.name,
-            id_device=device.id,
+            type_device=device.type_device,
             is_parallel=task_is_parallel,
             time_task=task_timedelta # Передаем timedelta объект
         )
@@ -406,7 +419,7 @@ async def process_task_time(message: Message, state: FSMContext):
 
 
 @router.message(F.text == "Добавить протокол") # Обработчик для кнопки "Добавить протокол"
-async def cmd_add_protocol_director_button(message: types.Message, state: FSMContext):
+async def cmd_add_protocol_director_button(message: Message, state: FSMContext):
     """
     Обработчик команды "Добавить протокол" через ReplyKeyboard.
     Запрашивает у директора название протокола и переходит к выбору задач.
@@ -419,7 +432,7 @@ async def cmd_add_protocol_director_button(message: types.Message, state: FSMCon
 
 
 @router.message(DirectorState.waiting_for_protocol_name, F.text) # Обработчик ожидания названия протокола
-async def process_protocol_name(message: types.Message, state: FSMContext):
+async def process_protocol_name(message: Message, state: FSMContext):
     """
     Обработчик получения названия протокола от директора.
     Сохраняет название протокола в FSM context и предлагает выбрать первую задачу.
@@ -430,7 +443,7 @@ async def process_protocol_name(message: types.Message, state: FSMContext):
     await show_tasks_for_protocol_choice(message, state) # Функция для отображения кнопок выбора задач
 
 
-async def show_tasks_for_protocol_choice(message: types.Message, state: FSMContext):
+async def show_tasks_for_protocol_choice(message: Message, state: FSMContext):
     """
     Функция для отображения кнопок выбора стандартных задач для протокола.
     Получает список всех стандартных задач из БД и формирует InlineKeyboard.
