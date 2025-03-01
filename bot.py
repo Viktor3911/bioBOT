@@ -17,7 +17,7 @@ from aiogram.fsm.state import State, StatesGroup
 from core.settings import BOT_TOKEN
 import core.config as config
 from core.commands import set_commands
-from core.handlers import admin, register, base
+from core.handlers import admin, director, register, base
 from core.middlewares.middlewares import CustomFSMContextMiddleware 
 from core.utils import dependencies
 
@@ -30,7 +30,7 @@ dependencies.bot = Bot(token=BOT_TOKEN)
 
 dp = Dispatcher(storage=dependencies.storage)
 dp.update.outer_middleware(CustomFSMContextMiddleware(storage=dependencies.storage))
-dp.include_routers(admin.router, register.router, base.router)
+dp.include_routers(admin.router, director.router, register.router, base.router)
 
 
 async def start_bot(bot: Bot):
