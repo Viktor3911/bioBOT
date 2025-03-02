@@ -9,6 +9,8 @@ import logging
 from core.utils import dependencies
 import psycopg2
 import psycopg2.extras
+from core.config import WORKING_DAY_END, WORKING_DAY_START
+
 
 logging.basicConfig(level=logging.INFO)
 
@@ -650,6 +652,223 @@ class Reservation:
 
         return list(protocol_reservations_map.items()) # Возвращаем список кортежей (number_protocol, [reservations])
 
+    @staticmethod
+    def get_all_by_today_with_protocol_numbers_available_for_assistant(user_id: int) -> List[Tuple[int, List['Reservation']]]:
+        """
+        Получает все резервации на текущий день, сгруппированные по number_protocol,
+        и фильтрует, чтобы показать только те протоколы, к которым ассистент еще не привязан.
+        """
+        today_date = date.today()
+        query = f"""
+            SELECT * FROM "{Reservation.table}"
+            WHERE DATE(start_date) = %s
+            ORDER BY number_protocol, start_date
+        """
+        query_params = (today_date,)
+        records = dependencies.db_manager.find_records(
+            table_name=Reservation.table,
+            custom_query=query,
+            query_params=query_params,
+            multiple=True
+        )
+        reservations: list[Reservation] = []
+        for record in records:
+            if isinstance(record['assistants'], str):
+                if record['assistants']:
+                    record['assistants'] = json.loads(record['assistants'])
+            reservation = Reservation(**record)
+            if user_id not in reservation.assistants: # Фильтруем, чтобы не показывать протоколы, к которым ассистент уже привязан
+                reservations.append(reservation)
+
+        protocol_reservations_map = {}
+        for res in reservations:
+            if res.number_protocol not in protocol_reservations_map:
+                protocol_reservations_map[res.number_protocol] = []
+            protocol_reservations_map[res.number_protocol].append(res)
+
+        return list(protocol_reservations_map.items())
+
+    @staticmethod
+    def replan_schedule_from(reservation_id: int):
+        """
+        Перепланирует расписание, начиная с указанной резервации и далее.
+        Алгоритм перепланирования аналогичен добавлению протокола в расписание директором.
+        """
+        reservation_to_replan = Reservation.get_by_id(reservation_id)
+        if not reservation_to_replan:
+            raise RecordNotFoundError(f"Резервация с ID {reservation_id} не найдена.")
+
+        protocol_name = reservation_to_replan.type_protocol
+        protocol = Protocol.get_by_name(protocol_name)
+        if not protocol:
+            raise RecordNotFoundError(f"Протокол с именем '{protocol_name}' не найден.")
+
+        standart_tasks_names = protocol.list_standart_tasks
+        today_date = reservation_to_replan.start_date.date() if reservation_to_replan.start_date else date.today() # Берем дату из резервации или текущую
+        schedule_start_datetime = datetime.combine(today_date, WORKING_DAY_START)
+        schedule_end_datetime = datetime.combine(today_date, WORKING_DAY_END)
+
+        # Начинаем поиск времени для перепланирования с момента окончания текущей задачи, если возможно, или с начала рабочего дня
+        current_task_start_time = reservation_to_replan.end_date if reservation_to_replan.end_date and reservation_to_replan.end_date > datetime.now() else schedule_start_datetime
+        next_protocol_number = reservation_to_replan.number_protocol # Сохраняем номер протокола, чтобы не менять его
+
+        tasks_not_scheduled = []
+        replan_reservations = [] # Список для хранения перепланированных резерваций
+
+        task_index_to_start = -1
+        for index, task_name in enumerate(standart_tasks_names):
+            if task_name == reservation_to_replan.name_task:
+                task_index_to_start = index
+                break
+
+        if task_index_to_start == -1:
+            logging.warning(f"Задача '{reservation_to_replan.name_task}' не найдена в списке задач протокола '{protocol_name}'. Перепланирование отменено.")
+            return
+
+        # Начинаем перепланирование с задачи, следующей за указанной в reservation_id
+        tasks_to_replan = standart_tasks_names[task_index_to_start:]
+
+        for task_name in tasks_to_replan:
+            standart_task = StandartTask.get_by_name(task_name)
+            if not standart_task:
+                logging.warning(f"Стандартная задача '{task_name}' не найдена, пропуск.")
+                tasks_not_scheduled.append(task_name)
+                continue
+
+            task_duration = standart_task.time_task
+            if task_duration is None:
+                logging.warning(f"Для задачи '{task_name}' не указано время выполнения (time_task), пропуск.")
+                tasks_not_scheduled.append(task_name)
+                continue
+
+            device_type = standart_task.type_device
+
+            if device_type is None:
+                logging.warning(f"У задачи '{task_name}' не указан type_device, пропуск.")
+                tasks_not_scheduled.append(task_name)
+                continue
+
+            # Поиск доступного времени и устройства
+            available_slot_found = False
+            schedule_attempt_time = current_task_start_time
+            while schedule_attempt_time + task_duration <= schedule_end_datetime:
+                available_device = Device.find_available_device_by_type_and_time(
+                    type_device=device_type,
+                    start_time=schedule_attempt_time,
+                    end_time=schedule_attempt_time + task_duration
+                )
+                if available_device:
+                    # Найдено доступное устройство и время
+                    device_id = available_device.id
+                    task_end_time = schedule_attempt_time + task_duration
+
+                    # Ищем существующую резервацию для обновления или создаем новую, если не найдена для перепланирования
+                    existing_reservation = Reservation.find_by_protocol_task_device_dates(
+                        number_protocol=next_protocol_number,
+                        type_protocol=protocol_name,
+                        id_device=device_id,
+                        name_task=task_name,
+                        start_date=current_task_start_time, # Используем current_task_start_time для поиска
+                        end_date=task_end_time # Используем task_end_time для поиска
+                    )
+
+                    if existing_reservation:
+                        # Обновляем время существующей резервации
+                        existing_reservation.start_date = schedule_attempt_time
+                        existing_reservation.end_date = task_end_time
+                        existing_reservation.update()
+                        replan_reservations.append(existing_reservation)
+                    else:
+                        # Создаем новую резервацию, если не найдена существующая (в теории не должно происходить при перепланировании)
+                        reservation = Reservation(
+                            type_protocol=protocol_name,
+                            name_task=task_name,
+                            id_device=device_id,
+                            start_date=schedule_attempt_time,
+                            end_date=task_end_time,
+                            number_protocol=next_protocol_number
+                        )
+                        reservation.add(next_protocol_number) # Используем существующий номер протокола
+                        replan_reservations.append(reservation)
+
+                    current_task_start_time = task_end_time
+                    available_slot_found = True
+                    break # Переходим к следующей задаче
+                else:
+                    # Нет доступных устройств, сдвигаем время и пробуем снова
+                    schedule_attempt_time += timedelta(minutes=5) # Шаг сдвига времени, можно настроить
+                    if schedule_attempt_time.time() > WORKING_DAY_END:
+                        break # Вышли за пределы рабочего дня
+
+            if not available_slot_found:
+                logging.warning(f"Не удалось запланировать задачу '{task_name}' на сегодня из-за занятости оборудования.")
+                tasks_not_scheduled.append(task_name)
+
+        return replan_reservations, tasks_not_scheduled
+
+    @staticmethod
+    def _remove_assistant(reservation_id: int, assistant_id: int):
+        """
+        Удаляет ассистента из списка ассистентов для указанной резервации.
+        """
+        reservation = Reservation.get_by_id(reservation_id)
+        if not reservation:
+            raise RecordNotFoundError(f"Резервация с ID {reservation_id} не найдена.")
+
+        if assistant_id in reservation.assistants:
+            reservation.assistants.remove(assistant_id)
+            reservation.update()
+            return True
+        return False
+
+    def delay_task(self, minutes: int) -> 'Reservation':
+        """
+        Увеличивает время выполнения задачи на заданное количество минут.
+        Возвращает измененную резервацию.
+        """
+        if self.end_date:
+            self.end_date += timedelta(minutes=minutes)
+            self.update() # Обновляем время в БД
+            return self # Возвращаем измененную резервацию
+        return None # Возвращаем None, если end_date не установлен
+
+    def remove_assistant(self, user_id: int):
+        """
+        Удаляет ассистента из списка ассистентов резервации.
+        """
+        if user_id in self.assistants:
+            self.assistants.remove(user_id)
+            self.update()
+
+    @staticmethod
+    def delete_all_by_today():
+        """
+        Удаляет все резервации за текущий день из базы данных.
+        """
+        today_date = date.today()
+        query = f"""
+            DELETE FROM "{Reservation.table}"
+            WHERE DATE(start_date) = %s
+        """
+        Reservation.delete_records_by_date(Reservation.table, query, (today_date,))
+
+    @staticmethod
+    def delete_records_by_date(table_name, query, query_params):
+        """
+        Удаляет записи из таблицы по дате.
+        """
+        conn = dependencies.db_manager._connect() # Используем _connect для получения соединения из пула
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(query, query_params)
+                conn.commit()
+                logging.info(f"Успешно удалены записи из таблицы {table_name} за указанную дату.")
+                return True
+        except psycopg2.Error as e:
+            logging.error(f"Ошибка при удалении записей из таблицы {table_name}: {e}")
+            return False
+        finally:
+            dependencies.db_manager._db_conn.return_connection(conn) # Возвращаем соединение в пул
 
 class Protocol:
     table = "Protocols"

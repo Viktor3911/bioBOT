@@ -1,6 +1,6 @@
 import asyncio
-from datetime import datetime
 import re
+from datetime import datetime, timedelta # Добавим timedelta
 import logging
 
 from aiogram.filters.command import Command, CommandObject, CommandStart
@@ -19,6 +19,7 @@ from core.commands import set_commands
 from core.handlers import admin, director, register, assistant
 from core.middlewares.middlewares import CustomFSMContextMiddleware 
 from core.utils import dependencies
+from core.classes import Reservation, User, Device
 
 logging.basicConfig(level=logging.INFO)
 
@@ -46,8 +47,36 @@ async def cmd_help(message: types.Message):
     )
 
 
+async def check_schedule_and_notify():
+    """
+    Фоновая задача для проверки расписания и отправки уведомлений.
+    Запускается асинхронно в main().
+    """
+    logging.info('Фоновая задача рассылки напоминаний запущена')
+    while True:
+        now = datetime.now()
+        notification_time = now + timedelta(minutes=5) # Уведомление за 5 минут
+
+        reservations_today = Reservation.get_all_by_today() # Получаем все резервации на сегодня
+        for reservation in reservations_today:
+            if reservation.start_date:
+                if abs(reservation.start_date - notification_time) < timedelta(minutes=1): # Проверяем, что время начала близко к времени уведомления (в пределах 1 минуты)
+                    for assistant_id in reservation.assistants:
+                        try:
+                            user = User.get_by_id(assistant_id)
+                            if user:
+                                await dependencies.bot.send_message(
+                                    chat_id=assistant_id,
+                                    text=f"🔔 Напоминание: Через 5 минут начинается задача '{reservation.name_task}' (протокол '{reservation.type_protocol}') в {reservation.start_date.strftime('%H:%M')}. Кабинет: {Device.get_by_id(reservation.id_device).name_cabinet if Device.get_by_id(reservation.id_device) else 'Неизвестно'}.",
+                                )
+                        except Exception as e:
+                            logging.error(f"Ошибка при отправке уведомления ассистенту {assistant_id}: {e}")
+        await asyncio.sleep(60) # Проверяем каждую минуту
+
+
 async def main():
     dp.startup.register(start_bot)
+    asyncio.create_task(check_schedule_and_notify()) # Запускаем фоновую задачу уведомлений
     await dp.start_polling(dependencies.bot)
 
 

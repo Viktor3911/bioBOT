@@ -14,7 +14,8 @@ import logging
 
 from core.utils import dependencies
 from core.classes import User, DatabaseError, RecordNotFoundError, DuplicateRecordError, Cabinet, Device, StandartTask, Protocol, Reservation
-from core.utils.keyboards import director_keyboard, add_menu_keyboard # Импорт клавиатуры директора
+from core.keyboards.keyboards import director_keyboard, add_menu_keyboard # Импорт клавиатуры директора
+from core.config import WORKING_DAY_END, WORKING_DAY_START
 
 router = Router()
 
@@ -538,10 +539,6 @@ async def callback_protocol_tasks_done(query: CallbackQuery, state: FSMContext):
         await state.clear()
     finally:
         await query.answer()  # Убираем "часики"
-
-
-WORKING_DAY_START = time(9, 0)  # Начало рабочего дня - 9:00
-WORKING_DAY_END = time(18, 0)    # Конец рабочего дня - 18:00
 
 
 @router.message(F.text == "Добавить в расписание")

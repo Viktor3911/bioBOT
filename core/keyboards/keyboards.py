@@ -21,21 +21,19 @@ def director_keyboard():
     return keyboard
 
 
-def assistant_keyboard():
+def assistant_keyboard(has_protocol=False): # Добавим параметр has_protocol
     """
-    Создает ReplyKeyboardMarkup для директора с кнопками управления.
+    Клавиатура для ассистента.
+    Кнопка "Добавить протоколы на день" отображается, только если has_protocol=False.
     """
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [
-                KeyboardButton(text="Добавить протоколы на день"),
-                KeyboardButton(text="Мое расписание")
-            ],
-        ],
-        resize_keyboard=True,  # Автоматически уменьшает размер клавиатуры
-        one_time_keyboard=False  # Клавиатура не исчезает после первого использования
-    )
-    return keyboard
+    buttons = [
+        [KeyboardButton(text="Мое расписание")],
+    ]
+    # if not has_protocol: # Кнопка "Добавить протоколы на день" только если нет протокола
+    buttons.insert(0, [KeyboardButton(text="Добавить протоколы на день")]) # Вставляем в начало списка
+
+    markup = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    return markup
 
 
 def add_menu_keyboard():

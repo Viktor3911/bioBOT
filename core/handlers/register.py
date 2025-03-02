@@ -11,7 +11,7 @@ import logging
 
 from core.utils import dependencies
 from core.classes import User, DuplicateRecordError, DatabaseError, RecordNotFoundError
-from core.utils.keyboards import director_keyboard, assistant_keyboard # Импорт клавиатуры директора
+from core.keyboards.keyboards import director_keyboard, assistant_keyboard # Импорт клавиатуры директора
 
 router = Router()
 
