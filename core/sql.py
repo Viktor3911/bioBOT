@@ -370,6 +370,7 @@ class DatabaseManager:
                 id SERIAL PRIMARY KEY,
                 number_protocol INTEGER,
                 type_protocol TEXT,
+                id_device INTEGER,
 
                 name_task TEXT,
                 assistants JSONB,

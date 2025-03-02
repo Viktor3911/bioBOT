@@ -1,6 +1,7 @@
 import asyncio
 import re
-from datetime import timedelta
+from datetime import timedelta, time
+import datetime
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters.command import Command, CommandStart
@@ -12,7 +13,7 @@ from aiogram import Router
 import logging
 
 from core.utils import dependencies
-from core.classes import User, DatabaseError, RecordNotFoundError, DuplicateRecordError, Cabinet, Device, StandartTask, Protocol
+from core.classes import User, DatabaseError, RecordNotFoundError, DuplicateRecordError, Cabinet, Device, StandartTask, Protocol, Reservation
 from core.utils.keyboards import director_keyboard, add_menu_keyboard # Импорт клавиатуры директора
 
 router = Router()
@@ -36,9 +37,10 @@ class DirectorState(StatesGroup):
     choosing_task_for_protocol = State() # Новое состояние - выбор задач для протокола
     protocol_creation = State() # Новое состояние - создание протокола (сбор задач)
 
-        # Добавляем состояния для расписания
+    # Добавляем состояния для расписания
     choosing_protocol_for_schedule = State()  # Состояние выбора протокола
     waiting_for_schedule_date = State()  # Состояние ожидания даты выполнения
+    choosing_protocol_to_view_schedule = State() # Состояние выбора протокола для просмотра расписания
 
 def is_director(user_id: int) -> bool:
     """
@@ -472,7 +474,7 @@ async def show_tasks_for_protocol_choice(message: Message, state: FSMContext):
 
     if standart_tasks:
         markup = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=task.name, callback_data=f"choose_protocol_task_{task.name}")]
+            [InlineKeyboardButton(text=task.name, callback_data=f"c_{task.name}")] # с - choose_protocok_task
             for task in standart_tasks
         ] + [[InlineKeyboardButton(text="✅ Готово", callback_data="protocol_tasks_done")]])  # Кнопка "Готово"
 
@@ -482,12 +484,12 @@ async def show_tasks_for_protocol_choice(message: Message, state: FSMContext):
         await state.clear()
 
 
-@router.callback_query(DirectorState.choosing_task_for_protocol, F.data.startswith("choose_protocol_task_"))
+@router.callback_query(DirectorState.choosing_task_for_protocol, F.data.startswith("c_"))
 async def callback_choose_task_for_protocol(query: CallbackQuery, state: FSMContext):
     """
     Обработчик выбора стандартной задачи для протокола.
     """
-    task_name = query.data.split("_")[3]  # Извлекаем название задачи из callback_data
+    task_name = query.data.split("_")[1]  # Извлекаем название задачи из callback_data
     state_data = await state.get_data()
     protocol_tasks = state_data.get('protocol_tasks', [])  # Получаем текущий список задач протокола
 
@@ -536,3 +538,194 @@ async def callback_protocol_tasks_done(query: CallbackQuery, state: FSMContext):
         await state.clear()
     finally:
         await query.answer()  # Убираем "часики"
+
+
+WORKING_DAY_START = time(9, 0)  # Начало рабочего дня - 9:00
+WORKING_DAY_END = time(18, 0)    # Конец рабочего дня - 18:00
+
+
+@router.message(F.text == "Добавить в расписание")
+async def cmd_add_to_schedule(message: Message, state: FSMContext):
+    """
+    Обработчик кнопки "Добавить в расписание".
+    Предлагает директору выбрать протокол для добавления в расписание на день.
+    """
+    if not is_director(message.from_user.id):  # Проверка, является ли пользователь директором
+        return await message.answer("Только директора могут использовать эту команду.")
+
+    await state.set_state(DirectorState.choosing_protocol_for_schedule) # Переходим в состояние выбора протокола
+    protocols = Protocol.get_all() # Получаем список всех протоколов из БД
+
+    if protocols:
+        markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=p.name, callback_data=f"schedule_protocol_{p.name}")]
+            for p in protocols
+        ])
+        await message.answer("Выберите протокол для добавления в расписание на сегодня:", reply_markup=markup)
+    else:
+        await message.answer("В системе нет зарегистрированных протоколов. Сначала добавьте протокол.", reply_markup=director_keyboard())
+        await state.clear() # Очищаем состояние, так как нечего выбирать
+
+
+@router.callback_query(DirectorState.choosing_protocol_for_schedule, F.data.startswith("schedule_protocol_"))
+async def callback_choose_protocol_for_schedule(query: CallbackQuery, state: FSMContext):
+    """
+    Обработчик callback-запроса после выбора протокола для расписания.
+    Добавляет задачи из выбранного протокола в расписание на текущий день,
+    выбирая свободное устройство (Device) и учитывая занятость.
+    """
+    protocol_name = query.data.split("_")[2]
+    protocol = Protocol.get_by_name(protocol_name)
+
+    if not protocol:
+        await query.message.answer(f"Протокол '{protocol_name}' не найден.")
+        return await state.clear()
+
+    standart_tasks_names = protocol.list_standart_tasks
+    today_date = datetime.datetime.now() # Используем текущую дату и время для расписания на день
+    schedule_start_datetime = datetime.datetime.combine(today_date, WORKING_DAY_START)
+    schedule_end_datetime = datetime.datetime.combine(today_date, WORKING_DAY_END)
+    current_task_start_time = schedule_start_datetime
+    next_protocol_number = Reservation.count_protocol_numbers()
+
+    added_tasks_count = 0
+    tasks_not_scheduled = []
+
+    for task_name in standart_tasks_names:
+        standart_task = StandartTask.get_by_name(task_name)
+        if not standart_task:
+            logging.warning(f"Стандартная задача '{task_name}' не найдена, пропуск.")
+            tasks_not_scheduled.append(task_name)
+            continue
+
+        task_duration = standart_task.time_task
+        if task_duration is None:
+            logging.warning(f"Для задачи '{task_name}' не указано время выполнения (time_task), пропуск.")
+            tasks_not_scheduled.append(task_name)
+            continue
+
+        device_type = standart_task.type_device
+
+        if device_type is None:
+            logging.warning(f"У задачи '{task_name}' не указан type_device, пропуск.")
+            tasks_not_scheduled.append(task_name)
+            continue
+
+        # Поиск доступного времени и устройства
+        available_slot_found = False
+        schedule_attempt_time = current_task_start_time
+        while schedule_attempt_time + task_duration <= schedule_end_datetime:
+            available_device = Device.find_available_device_by_type_and_time(
+                type_device=device_type,
+                start_time=schedule_attempt_time,
+                end_time=schedule_attempt_time + task_duration
+            )
+            if available_device:
+                # Найдено доступное устройство и время
+                device_id = available_device.id # Получаем ID доступного устройства
+                task_end_time = schedule_attempt_time + task_duration
+                reservation = Reservation(
+                    type_protocol=protocol_name,
+                    name_task=task_name,
+                    id_device=device_id, # Assign device_id to reservation
+                    start_date=schedule_attempt_time,
+                    end_date=task_end_time
+                )
+                reservation.add(next_protocol_number)
+                current_task_start_time = task_end_time
+                added_tasks_count += 1
+                available_slot_found = True
+                break # Переходим к следующей задаче
+            else:
+                # Нет доступных устройств, сдвигаем время и пробуем снова
+                schedule_attempt_time += timedelta(minutes=5) # Шаг сдвига времени, можно настроить
+                if schedule_attempt_time.time() > WORKING_DAY_END:
+                    break # Вышли за пределы рабочего дня
+
+        if not available_slot_found:
+            logging.warning(f"Не удалось запланировать задачу '{task_name}' на сегодня из-за занятости оборудования.")
+            tasks_not_scheduled.append(task_name)
+
+    message_text = f"✅ В расписание на сегодня добавлено {added_tasks_count} задач из протокола '{protocol_name}'."
+    if tasks_not_scheduled:
+        not_scheduled_tasks_str = "\n".join([f"- {task_name}" for task_name in tasks_not_scheduled])
+        message_text += f"\n\n⚠️ Не удалось запланировать следующие задачи (из-за занятости оборудования, отсутствия данных о времени выполнения или type_device):\n{not_scheduled_tasks_str}"
+
+    await query.message.answer(message_text, reply_markup=director_keyboard())
+    await state.clear()
+    await query.answer()
+
+
+@router.message(F.text == "Посмотреть расписание")
+async def cmd_view_schedule(message: Message, state: FSMContext):
+    """
+    Обработчик кнопки "Посмотреть расписание".
+    Предлагает директору выбрать протокол для просмотра расписания на день.
+    """
+    if not is_director(message.from_user.id):  # Проверка, является ли пользователь директором
+        return await message.answer("Только директора могут использовать эту команду.")
+
+    await state.set_state(DirectorState.choosing_protocol_to_view_schedule) # Переходим в состояние выбора протокола
+    reservations_today = Reservation.get_all_by_today()
+    protocol_names_today = set()
+
+    for res in reservations_today:
+        protocol_names_today.add(res.type_protocol)
+
+    if protocol_names_today:
+        markup = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=p_name, callback_data=f"v_{p_name}")] # v - view_protocol_schedule_s
+            for p_name in protocol_names_today
+        ])
+        await message.answer("Выберите протокол для просмотра расписания на сегодня:", reply_markup=markup)
+    else:
+        await message.answer("На сегодня расписание не добавлено.", reply_markup=director_keyboard())
+        await state.clear() # Очищаем состояние, так как нечего выбирать
+
+
+@router.callback_query(DirectorState.choosing_protocol_to_view_schedule, F.data.startswith("v_"))
+async def callback_view_protocol_schedule(query: CallbackQuery, state: FSMContext):
+    """
+    Обработчик callback-запроса после выбора протокола для просмотра расписания.
+    Показывает детальное расписание для выбранного протокола на текущий день.
+    """
+    protocol_name = query.data.split("_")[1] # Извлекаем название протокола из callback_data
+    today_date = datetime.datetime.now() # Используем текущую дату и время для расписания на день
+    protocol_reservations = Reservation.find_by_protocol_name(protocol_name) # Получаем резервации для выбранного протокола
+
+    schedule_info = f"<b>Расписание протокола '{protocol_name}' на {today_date.strftime('%d.%m.%Y')}:</b>\n\n"
+    tasks_info = []
+
+    for reservation in protocol_reservations:
+        task_info = await format_task_schedule_info(reservation) # Формируем информацию о задаче
+        tasks_info.append(task_info)
+
+    if tasks_info:
+        schedule_info += "\n".join(tasks_info)
+    else:
+        schedule_info += "Нет задач для данного протокола на сегодня."
+
+    await query.message.answer(schedule_info, parse_mode="HTML", reply_markup=director_keyboard()) # Отправляем информацию и возвращаем в главное меню
+    await state.clear() # Очищаем состояние
+    await query.answer() # Убираем "часики"
+
+
+async def format_task_schedule_info(reservation: Reservation) -> str:
+    """
+    Функция для формирования информации о задаче протокола для расписания.
+    """
+    task_name = reservation.name_task
+    start_time = reservation.start_date.strftime("%H:%M") if reservation.start_date else "Не задано"
+    end_time = reservation.end_date.strftime("%H:%M") if reservation.end_date else "Не задано"
+    device = Device.get_by_id(reservation.id_device)
+    cabinet_name = device.name_cabinet if device else "Неизвестно"
+    device_name = device.name if device else "Неизвестно"
+
+    task_info = (
+        f"<b>Задача:</b> {task_name}\n"
+        f"<b>Время:</b> {start_time} - {end_time}\n"
+        f"<b>Кабинет:</b> {cabinet_name}\n"
+        f"<b>Устройство:</b> {device_name}\n"
+        f"-------------------------"
+    )
+    return task_info

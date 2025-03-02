@@ -11,7 +11,7 @@ import logging
 
 from core.utils import dependencies
 from core.classes import User, DuplicateRecordError, DatabaseError, RecordNotFoundError
-from core.utils.keyboards import director_keyboard # Импорт клавиатуры директора
+from core.utils.keyboards import director_keyboard, assistant_keyboard # Импорт клавиатуры директора
 
 router = Router()
 
@@ -32,7 +32,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         if user.id_role == User.ROLE_DIRECTOR: # Проверяем роль пользователя
             await message.answer(f"Приветствую, директор {user.fio}!", reply_markup=director_keyboard()) # Отправляем клавиатуру директора
         else:
-            await message.answer(f"Привет, {user.fio}! Вы уже зарегистрированы.")
+            await message.answer(f"Привет, {user.fio}! Вы уже зарегистрированы.", reply_markup=assistant_keyboard())
     else:
         await state.set_state(RegistrationState.waiting_for_fio)
         await message.answer("Здравствуйте! Пожалуйста, введите ваше ФИО для регистрации.")
@@ -51,7 +51,7 @@ async def process_fio(message: types.Message, state: FSMContext):
         user = User.get_or_create(user_id) # Получаем или создаем пользователя
         user.fio = fio
         user.update() # Обновляем ФИО
-        await message.answer(f"Спасибо, {fio}! Вы успешно зарегистрированы.", reply_markup=ReplyKeyboardRemove()) # Убираем ReplyKeyboardRemove, если хотим оставить клавиатуру директора
+        await message.answer(f"Спасибо, {fio}! Вы успешно зарегистрированы.", reply_markup=assistant_keyboard()) # Убираем ReplyKeyboardRemove, если хотим оставить клавиатуру директора
         if user.id_role == User.ROLE_DIRECTOR: # Если роль директора, отправляем клавиатуру
             await message.answer("Теперь вы можете использовать команды директора.", reply_markup=director_keyboard())
         await state.clear()

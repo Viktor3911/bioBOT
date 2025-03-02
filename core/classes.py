@@ -278,6 +278,42 @@ class Device:
             return Device(**records)
         return None
 
+    @staticmethod
+    def find_available_device_by_type_and_time(type_device: int, start_time: datetime, end_time: datetime) -> Optional['Device']:
+        """
+        Ищет и возвращает первое доступное устройство заданного type_device на заданный временной интервал.
+        Доступным считается устройство, у которого нет пересекающихся резерваций на это время.
+        """
+        query = f"""
+            SELECT d.*
+            FROM "{Device.table}" d
+            WHERE d.type_device = %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM "{Reservation.table}" r
+                  JOIN "{StandartTask.table}" st ON r.name_task = st.name
+                  WHERE st.type_device = d.type_device
+                    AND r.id_device = d.id  -- Проверяем id_device
+                    AND (
+                        (r.start_date <= %s AND r.end_date > %s)
+                        OR (r.start_date < %s AND r.end_date >= %s)
+                        OR (r.start_date >= %s AND r.end_date <= %s)
+                    )
+              )
+            LIMIT 1
+        """
+        query_params = (type_device, start_time, start_time, end_time, end_time, start_time, end_time)
+        record = dependencies.db_manager.find_records(
+            table_name=Device.table,
+            custom_query=query,
+            query_params=query_params,
+            multiple=False
+        )
+        if record:
+            return Device(**record)
+        return None
+
+
 
 class StandartTask:
     table = "StandartTasks"
@@ -328,7 +364,8 @@ class StandartTask:
             # Преобразуем time из INTERVAL в timedelta при чтении из БД
             if data['time_task']:
                 interval_val = data['time_task'] # Получаем объект psycopg2.extras.Interval
-                data['time_task'] = timedelta(seconds=interval_val.total_seconds()) # Создаем timedelta из компонентов INTERVAL            return StandartTask(**data)
+                data['time_task'] = timedelta(seconds=interval_val.total_seconds()) # Создаем timedelta из компонентов INTERVAL            
+                return StandartTask(**data)
         return None
 
     @staticmethod
@@ -363,45 +400,48 @@ class StandartTask:
 class Reservation:
     table = "Reservations"
     # id SERIAL PRIMARY KEY, number_protocol INTEGER, type_protocol TEXT, name_task TEXT, assistants JSONB, start_date TIMESTAMP, end_date TIMESTAMP, active BOOLEAN, FOREIGN KEY (type_protocol) REFERENCES "Protocols"(name), FOREIGN KEY (name_task) REFERENCES "StandartTasks"(name)
-    columns = ['number_protocol', 'type_protocol', 'name_task', 'assistants', 'start_date', 'end_date', 'active'] # removed 'id', added 'number_protocol', 'type_protocol', 'active'
+    columns = ['number_protocol', 'type_protocol', 'id_device', 'name_task', 'assistants', 'start_date', 'end_date', 'active'] # added 'id_device'
 
     def __init__(
         self,
-        type_protocol: str, # added, not optional, renamed from type_protocol to type_protocol
-        name_task: str, # name_task теперь обязательный параметр и FK
-        assistants: List[int] = None, # Изменено на List[int] и Optional
-        start_date: datetime = None, # Тип datetime
-        end_date: datetime = None,   # Тип datetime
-        active: bool = True, # added, default True
-        number_protocol: int = None, # added and Optional, will be generated in add()
-        id: int = None # id может быть None при создании новой резервации
+        type_protocol: str,
+        name_task: str,
+        id_device: int, # added id_device
+        assistants: List[int] = None,
+        start_date: datetime = None,
+        end_date: datetime = None,
+        active: bool = True,
+        number_protocol: int = None,
+        id: int = None
     ):
         if not isinstance(name_task, str):
             raise ValueError(f"Название задачи '{name_task}' должно быть строкой.")
-        if not isinstance(type_protocol, str): # added check for type_protocol
+        if not isinstance(type_protocol, str):
             raise ValueError(f"Тип протокола '{type_protocol}' должен быть строкой.")
+        if not isinstance(id_device, int): # added check for id_device
+            raise ValueError(f"ID устройства '{id_device}' должно быть целым числом.")
 
-        self.id: Optional[int] = id # id может быть None
-        self.number_protocol: Optional[int] = number_protocol # added and Optional
-        self.type_protocol: str = type_protocol # added, renamed from type_protocol to type_protocol
+        self.id: Optional[int] = id
+        self.number_protocol: Optional[int] = number_protocol
+        self.type_protocol: str = type_protocol
+        self.id_device: int = id_device # added id_device
         self.name_task: str = name_task
-        self.assistants: Optional[List[int]] = assistants if assistants is not None else [] # Изменено на List[int] и инициализация пустым списком
+        self.assistants: Optional[List[int]] = assistants if assistants is not None else []
         self.start_date: Optional[datetime] = start_date
         self.end_date: Optional[datetime] = end_date
-        self.active: bool = active # added
+        self.active: bool = active
 
-    def add(self, next_protocol_number) -> Optional[int]: # Возвращаем ID добавленной резервации
+    def add(self, next_protocol_number) -> Optional[int]:
         """Добавляет резервацию в БД."""
-        # Получаем следующий номер протокола
-        self.number_protocol = next_protocol_number # Устанавливаем number_protocol перед вставкой
+        self.number_protocol = next_protocol_number
 
-        assistants_json = json.dumps(self.assistants) # Сериализация списка assistants в JSON строку
+        assistants_json = json.dumps(self.assistants)
 
         if dependencies.db_manager.insert(Reservation.table, Reservation.columns,
-                                          [self.number_protocol, self.type_protocol, self.name_task, assistants_json, self.start_date, self.end_date, self.active]) is None: # Используем assistants_json для вставки
+                                          [self.number_protocol, self.type_protocol, self.id_device, self.name_task, assistants_json, self.start_date, self.end_date, self.active]) is None: # added self.id_device
             raise DatabaseError("Ошибка при добавлении резервации в БД.")
-        # Получаем ID добавленной записи (SERIAL PRIMARY KEY) - самый простой способ через поиск по сгенерированному number_protocol, type_protocol, name_task, start_date и end_date
-        reservation = Reservation.find_by_protocol_task_dates(self.number_protocol, self.type_protocol, self.name_task, self.start_date, self.end_date) # added self.number_protocol
+
+        reservation = Reservation.find_by_protocol_task_device_dates(self.number_protocol, self.type_protocol, self.id_device, self.name_task, self.start_date, self.end_date) # added self.id_device
         if reservation:
             return reservation.id
         else:
@@ -412,9 +452,10 @@ class Reservation:
         """Обновляет данные резервации в БД."""
         if not Reservation.get_by_id(self.id):
             raise RecordNotFoundError(f"Резервация с ID {self.id} не найдена.")
-        assistants_json = json.dumps(self.assistants) # Сериализация списка assistants в JSON строку
-        if not dependencies.db_manager.update(Reservation.table, columns=['number_protocol', 'type_protocol', 'name_task', 'assistants', 'start_date', 'end_date', 'active'], # Обновляем все поля, added 'number_protocol', 'type_protocol', 'active'
-                                      values=[self.number_protocol, self.type_protocol, self.name_task, assistants_json, self.start_date, self.end_date, self.active], # Используем assistants_json для обновления
+        assistants_json = json.dumps(self.assistants)
+        if not dependencies.db_manager.update(Reservation.table,
+                                      ['number_protocol', 'type_protocol', 'id_device', 'name_task', 'assistants', 'start_date', 'end_date', 'active'], # added 'id_device'
+                                      [self.number_protocol, self.type_protocol, self.id_device, self.name_task, assistants_json, self.start_date, self.end_date, self.active], # added self.id_device
                                       condition_columns=['id'], condition_values=[self.id]):
             raise DatabaseError(f"Ошибка при обновлении резервации с ID {self.id} в БД.")
         return True
@@ -424,10 +465,10 @@ class Reservation:
         """Получает резервацию по ID."""
         data = dependencies.db_manager.find_records(table_name=Reservation.table, search_columns=['id'], search_values=[reservation_id])
         if data:
-            if data['assistants']: # Десериализация JSON строки в список int
-                data['assistants'] = json.loads(data['assistants'])
+            if isinstance(data['assistants'], str):  # Проверяем, является ли значение строкой
+                if data['assistants']:
+                    data['assistants'] = json.loads(data['assistants'])
             return Reservation(**data)
-
         return None
 
     @staticmethod
@@ -436,8 +477,9 @@ class Reservation:
         records = dependencies.db_manager.find_records(table_name=Reservation.table, multiple=True)
         reservations = []
         for record in records:
-            if record['assistants']: # Десериализация JSON строки в список int
-                record['assistants'] = json.loads(record['assistants'])
+            if isinstance(records['assistants'], str):  # Проверяем, является ли значение строкой
+                if record['assistants']:
+                    record['assistants'] = json.loads(record['assistants'])
             reservations.append(Reservation(**record))
         return reservations
 
@@ -447,43 +489,46 @@ class Reservation:
         records = dependencies.db_manager.find_records(table_name=Reservation.table, search_columns=['name_task'], search_values=[name_task], multiple=True)
         reservations = []
         for record in records:
-            if record['assistants']: # Десериализация JSON строки в список int
-                record['assistants'] = json.loads(record['assistants'])
+            if isinstance(record['assistants'], str):  # Проверяем, является ли значение строкой
+                if record['assistants']:
+                    record['assistants'] = json.loads(record['assistants'])
             reservations.append(Reservation(**record))
         return reservations
 
     @staticmethod
-    def find_by_protocol_name(type_protocol: str) -> List['Reservation']: # renamed from find_by_protocol_id to find_by_protocol_name, using type_protocol which is protocol name
-        """Находит резервации по имени протокола.""" # renamed from Находит резервации по ID протокола to Находит резервации по имени протокола
-        records = dependencies.db_manager.find_records(table_name=Reservation.table, search_columns=['type_protocol'], search_values=[type_protocol], multiple=True) # search by type_protocol which is protocol name
+    def find_by_protocol_name(type_protocol: str) -> List['Reservation']:
+        """Находит резервации по имени протокола."""
+        records = dependencies.db_manager.find_records(table_name=Reservation.table, search_columns=['type_protocol'], search_values=[type_protocol], multiple=True)
         reservations = []
         for record in records:
-            if record['assistants']: # Десериализация JSON строки в список int
-                record['assistants'] = json.loads(record['assistants'])
+            if isinstance(record['assistants'], str):  # Проверяем, является ли значение строкой
+                if record['assistants']:
+                    record['assistants'] = json.loads(record['assistants'])
             reservations.append(Reservation(**record))
         return reservations
 
     @staticmethod
-    def find_by_protocol_task_dates(number_protocol: int, type_protocol: str, name_task: str, start_date: datetime, end_date: datetime) -> Optional['Reservation']: # added 'number_protocol', 'type_protocol'
-        """Находит резервацию по номеру протокола, типу протокола, имени задачи, дате начала и дате окончания.""" # added 'номеру протокола, типу протокола, '
+    def find_by_protocol_task_device_dates(number_protocol: int, type_protocol: str, id_device: int, name_task: str, start_date: datetime, end_date: datetime) -> Optional['Reservation']: # added id_device
+        """Находит резервацию по номеру протокола, типу протокола, ID устройства, имени задачи, дате начала и дате окончания.""" # added 'ID устройства'
         records = dependencies.db_manager.find_records(table_name=Reservation.table,
-                                                    search_columns=['number_protocol', 'type_protocol', 'name_task', 'start_date', 'end_date'], # added 'number_protocol', 'type_protocol'
-                                                    search_values=[number_protocol, type_protocol, name_task, start_date, end_date], # added 'number_protocol', 'type_protocol'
-                                                    multiple=False) # Убедитесь, что даты приводятся к строкам в нужном формате, если необходимо
+                                                    search_columns=['number_protocol', 'type_protocol', 'id_device', 'name_task', 'start_date', 'end_date'], # added 'id_device'
+                                                    search_values=[number_protocol, type_protocol, id_device, name_task, start_date, end_date], # added id_device
+                                                    multiple=False)
         if records:
-            if records['assistants']: # Десериализация JSON строки в список int
-                records['assistants'] = json.loads(records['assistants'])
+            if isinstance(records['assistants'], str):  # Проверяем, является ли значение строкой
+                if records['assistants']:
+                    records['assistants'] = json.loads(records['assistants'])
             return Reservation(**records)
         return None
 
     @staticmethod
     def count_protocol_numbers() -> int:
         """Подсчитывает количество уникальных number_protocol в таблице Reservations."""
-        query = "SELECT COALESCE(MAX(number_protocol), 0) + 1 FROM \"Reservations\"" # Используем MAX вместо COUNT DISTINCT для получения следующего номера
+        query = "SELECT COALESCE(MAX(number_protocol), 0) + 1 FROM \"Reservations\""
         record = dependencies.db_manager.find_records(table_name=Reservation.table, custom_query=query)
-        if record and record['coalesce'] is not None: # 'coalesce' - имя столбца, возвращаемого COALESCE(MAX(...), 0) + 1
-            return record['coalesce']
-        return 1 # Если таблица пуста, начинаем с номера 1
+        if record and list(record.values()): # Проверяем, что record не None и не пустой
+            return list(record.values())[0] # Возвращаем первое значение из словаря record (независимо от имени ключа)
+        return 1
 
     @staticmethod
     def find_by_assistant_and_date(user_id: int, date_reservation: date = None) -> List['Reservation']:
@@ -499,7 +544,7 @@ class Reservation:
             WHERE assistants::jsonb @> %s
               AND DATE(start_date) = %s
         """
-        query_params = (json.dumps([user_id]), date_reservation) #  Ищем вхождение user_id как элемента массива JSONB
+        query_params = (json.dumps([user_id]), date_reservation)
 
         records = dependencies.db_manager.find_records(
             table_name=Reservation.table,
@@ -509,10 +554,101 @@ class Reservation:
         )
         reservations = []
         for record in records:
-            if record['assistants']: # Десериализация JSON строки в список int
-                record['assistants'] = json.loads(record['assistants'])
             reservations.append(Reservation(**record))
         return reservations
+
+    @staticmethod
+    def find_overlapping_reservations(id_device: int, start_time: datetime, end_time: datetime) -> List['Reservation']: # updated to filter by id_device
+        """
+        Находит резервации для заданного id_device, которые пересекаются с заданным временным интервалом. # updated to filter by id_device
+        """
+        query = f"""
+            SELECT r.*
+            FROM "{Reservation.table}" r
+            WHERE r.id_device = %s  -- Фильтрация по id_device
+              AND (
+                  (r.start_date <= %s AND r.end_date > %s)
+                  OR (r.start_date < %s AND r.end_date >= %s)
+                  OR (r.start_date >= %s AND r.end_date <= %s)
+              )
+        """
+        query_params = (id_device, start_time, start_time, end_time, end_time, start_time, end_time) # updated query_params
+        records = dependencies.db_manager.find_records(
+            table_name=Reservation.table,
+            custom_query=query,
+            query_params=query_params,
+            multiple=True
+        )
+        reservations = []
+        for record in records:
+            if isinstance(record['assistants'], str):  # Проверяем, является ли значение строкой
+                if record['assistants']:
+                    record['assistants'] = json.loads(records['assistants'])
+            reservations.append(Reservation(**record))
+        return reservations
+
+    @staticmethod
+    def get_all_by_today() -> List['Reservation']:
+        """
+        Получает все резервации на текущий день.
+        """
+        today_date = date.today()
+        query = f"""
+            SELECT * FROM "{Reservation.table}"
+            WHERE DATE(start_date) = %s
+        """
+        query_params = (today_date,)
+        records = dependencies.db_manager.find_records(
+            table_name=Reservation.table,
+            custom_query=query,
+            query_params=query_params,
+            multiple=True
+        )
+        reservations = []
+        for record in records:
+            if isinstance(record['assistants'], str):  # Проверяем, является ли значение строкой
+                if record['assistants']:
+                    record['assistants'] = json.loads(record['assistants'])
+            reservations.append(Reservation(**record))
+        return reservations
+      
+    @staticmethod
+    def get_all_by_today_with_protocol_numbers() -> List[Tuple[int, List['Reservation']]]:
+        """
+        Получает все резервации на текущий день, сгруппированные по number_protocol.
+
+        Returns:
+            List[Tuple[int, List['Reservation']]]: Список кортежей, где каждый кортеж содержит:
+            - number_protocol (int): Номер протокола.
+            - List['Reservation']: Список резерваций для данного number_protocol.
+        """
+        today_date = date.today()
+        query = f"""
+            SELECT * FROM "{Reservation.table}"
+            WHERE DATE(start_date) = %s
+            ORDER BY number_protocol, start_date
+        """
+        query_params = (today_date,)
+        records = dependencies.db_manager.find_records(
+            table_name=Reservation.table,
+            custom_query=query,
+            query_params=query_params,
+            multiple=True
+        )
+        reservations: list[Reservation] = []
+        for record in records:
+            if isinstance(record['assistants'], str):  # Проверяем, является ли значение строкой
+                if record['assistants']:
+                    record['assistants'] = json.loads(record['assistants'])
+            reservations.append(Reservation(**record))
+
+        protocol_reservations_map = {} # Словарь для группировки по number_protocol
+        for res in reservations:
+            if res.number_protocol not in protocol_reservations_map:
+                protocol_reservations_map[res.number_protocol] = []
+            protocol_reservations_map[res.number_protocol].append(res)
+
+        return list(protocol_reservations_map.items()) # Возвращаем список кортежей (number_protocol, [reservations])
 
 
 class Protocol:
@@ -521,7 +657,7 @@ class Protocol:
 
     def __init__(
         self,
-        name: str, # name теперь обязательный параметр
+        name: str,
         list_standart_tasks: list = None, # Список названий стандартных задач
     ):
         if not isinstance(name, str):
@@ -554,8 +690,9 @@ class Protocol:
         data = dependencies.db_manager.find_records(table_name=Protocol.table, search_columns=['id'], search_values=[protocol_id])
         if data:
             # Преобразуем list_standart_tasks из JSONB строки в список Python при чтении из БД
-            if data['list_standart_tasks']:
-                data['list_standart_tasks'] = json.loads(data['list_standart_tasks'])
+            if isinstance(data['list_standart_tasks'], str):  # Проверяем, является ли значение строкой
+                if data['list_standart_tasks']:
+                    data['list_standart_tasks'] = json.loads(data['list_standart_tasks']) # Преобразование JSONB в список Python для каждого элемента списка
             return Protocol(**data)
         return None
 
@@ -565,8 +702,9 @@ class Protocol:
         data = dependencies.db_manager.find_records(table_name=Protocol.table, search_columns=['name'], search_values=[protocol_name])
         if data:
             # Преобразуем list_standart_tasks из JSONB строки в список Python при чтении из БД
-            if data['list_standart_tasks']:
-                data['list_standart_tasks'] = json.loads(data['list_standart_tasks'])
+            if isinstance(data['list_standart_tasks'], str):  # Проверяем, является ли значение строкой
+                if data['list_standart_tasks']:
+                    data['list_standart_tasks'] = json.loads(data['list_standart_tasks']) # Преобразование JSONB в список Python для каждого элемента списка
             return Protocol(**data)
         return None
 
@@ -576,8 +714,9 @@ class Protocol:
         records = dependencies.db_manager.find_records(table_name=Protocol.table, multiple=True)
         protocols = []
         for record in records:
-            if record['list_standart_tasks']:
-                record['list_standart_tasks'] = json.loads(record['list_standart_tasks']) # Преобразование JSONB в список Python для каждого элемента списка
+            if isinstance(record['list_standart_tasks'], str):  # Проверяем, является ли значение строкой
+                if record['list_standart_tasks']:
+                    record['list_standart_tasks'] = json.loads(record['list_standart_tasks']) # Преобразование JSONB в список Python для каждого элемента списка
             protocols.append(Protocol(**record))
         return protocols
 
@@ -588,8 +727,9 @@ class Protocol:
         records = dependencies.db_manager.find_records(table_name=Protocol.table, custom_query=query, query_params=(name,), multiple=False)
         if records:
             # Преобразуем list_standart_tasks из JSONB строки в список Python при чтении из БД
-            if records['list_standart_tasks']:
-                records['list_standart_tasks'] = json.loads(records['list_standart_tasks'])
+            if isinstance(records['list_standart_tasks'], str):  # Проверяем, является ли значение строкой
+                if records['list_standart_tasks']:
+                    records['list_standart_tasks'] = json.loads(records['list_standart_tasks']) # Преобразование JSONB в список Python для каждого элемента списка
             return Protocol(**records)
         return None
 

@@ -21,6 +21,23 @@ def director_keyboard():
     return keyboard
 
 
+def assistant_keyboard():
+    """
+    Создает ReplyKeyboardMarkup для директора с кнопками управления.
+    """
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [
+                KeyboardButton(text="Добавить протоколы на день"),
+                KeyboardButton(text="Мое расписание")
+            ],
+        ],
+        resize_keyboard=True,  # Автоматически уменьшает размер клавиатуры
+        one_time_keyboard=False  # Клавиатура не исчезает после первого использования
+    )
+    return keyboard
+
+
 def add_menu_keyboard():
     """
     Создает InlineKeyboardMarkup для подменю кнопки "Добавить ...".
