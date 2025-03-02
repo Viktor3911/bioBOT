@@ -58,10 +58,19 @@ LabPlanBot — это телеграм-бот, предназначенный д
 
 ## Авторы
 ### Виктор Ма
-- 🖱️ github: [@Viktor3911](https://github.com/Viktor3911)
+- [@Viktor3911](https://github.com/Viktor3911)
 - 📧 Email: ma.vv@dvfu.ru
 - 💬 Telegram: [@adontus12](https://t.me/adontus12)
 ### Прокопенко Сергей
-- ⌨️ github: [@serptid](https://github.com/serptid)
+- [@serptid](https://github.com/serptid)
 - 📧 Email: prokopenko.si@dvfu.ru
 - 💬 Telegram: [@ProkopenkoSR](https://t.me/ProkopenkoSR)
+## Со Авторы
+### Кириллов Олег
+- 💬 Telegram: [@olegrover](https://t.me/olegrover)
+### Есина Маргарита
+- 💬 Telegram: [@queen_oftheball](https://t.me/queen_oftheball)
+### Улько Данила
+- 💬 Telegram: [@Nothdan](https://t.me/Nothdan)
+### Пятых Алексей
+- 💬 Telegram: [@Ghost0fBabel](https://t.me/Ghost0fBabel)
