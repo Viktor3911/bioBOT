@@ -16,6 +16,6 @@ success = dependencies.db_manager.insert(table, columns, values)
 values = [2, "assistant"]
 success = dependencies.db_manager.insert(table, columns, values)
 
-director = User(id=FIRST, id_role=User.ROLE_DIRECTOR, fio='фио директора')
-director.add()
+# director = User(id=FIRST, id_role=User.ROLE_DIRECTOR, fio='фио директора')
+# director.add()
 

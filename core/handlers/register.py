@@ -19,6 +19,70 @@ class RegistrationState(StatesGroup):
     waiting_for_fio = State()
 
 
+@router.message(CommandStart(deep_link=True, magic=F.args == "director_show_register"))
+async def cmd_start_director_show_register(message: types.Message, state: FSMContext):
+    """
+    Обработчик команды /start с диплинком "director_show_register".
+    Регистрирует пользователя как директора.
+    """
+    logging.info(f"Регистрация через диплинк")
+    user_id = 1
+
+    user = User.get_or_create(user_id)
+    user.id_role = 1
+    user.update()
+    if user.fio:
+        return await message.answer(f"Приветствую, директор {user.fio}!", reply_markup=director_keyboard()) # Отправляем клавиатуру директора
+
+    await state.set_state(RegistrationState.waiting_for_fio)
+    await state.update_data(registration_role=User.ROLE_DIRECTOR) # Сохраняем роль директора
+    await state.update_data(user_id=user_id)
+    await message.answer("Регистрация директора. Пожалуйста, введите ваше ФИО.")
+
+
+@router.message(CommandStart(deep_link=True, magic=F.args == "assistant_show_register"))
+async def cmd_start_assistant_show_register(message: types.Message, state: FSMContext):
+    """
+    Обработчик команды /start с диплинком "assistant_show_register".
+    Регистрирует пользователя асситента.
+    """
+    logging.info(f"Регистрация через диплинк")
+    user_id = message.from_user.id
+
+    user = User.get_or_create(user_id)
+    user.id_role = 2
+    user.id_chief = 1
+    user.update()
+    if user.fio:
+        return await message.answer(f"Приветствую, ассистент {user.fio}!", reply_markup=assistant_keyboard()) # Отправляем клавиатуру директора
+
+    await state.set_state(RegistrationState.waiting_for_fio)
+    await state.update_data(registration_role=User.ROLE_ASSISTANT) # Сохраняем роль директора
+    await state.update_data(user_id=user_id)
+    await message.answer("Регистрация асситента. Пожалуйста, введите ваше ФИО.")
+
+
+@router.message(CommandStart(deep_link=True, magic=F.args == "director_register"))
+async def cmd_start_director_register(message: types.Message, state: FSMContext):
+    """
+    Обработчик команды /start с диплинком "director_register".
+    Регистрирует пользователя как директора.
+    """
+    logging.info(f"Регистрация через диплинк")
+    user_id = message.from_user.id
+
+    user = User.get_or_create(user_id)
+    user.id_role = 1
+    user.update()
+    if user.fio:
+        return await message.answer(f"Приветствую, директор {user.fio}!", reply_markup=director_keyboard()) # Отправляем клавиатуру директора
+
+    await state.set_state(RegistrationState.waiting_for_fio)
+    await state.update_data(registration_role=User.ROLE_DIRECTOR) # Сохраняем роль директора
+    await state.update_data(user_id=user_id)
+    await message.answer("Регистрация директора. Пожалуйста, введите ваше ФИО.")
+
+
 @router.message(CommandStart())
 async def cmd_start(message: types.Message, state: FSMContext):
     """
@@ -28,14 +92,15 @@ async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     user = User.get_by_id(user_id)
 
-    if user.fio:
-        if user.id_role == User.ROLE_DIRECTOR: # Проверяем роль пользователя
-            await message.answer(f"Приветствую, директор {user.fio}!", reply_markup=director_keyboard()) # Отправляем клавиатуру директора
+    if user:
+        if user.fio:
+            if user.id_role == User.ROLE_DIRECTOR: # Проверяем роль пользователя
+                await message.answer(f"Приветствую, директор {user.fio}!", reply_markup=director_keyboard()) # Отправляем клавиатуру директора
+            else:
+                await message.answer(f"Привет, {user.fio}! Вы уже зарегистрированы.", reply_markup=assistant_keyboard())
         else:
-            await message.answer(f"Привет, {user.fio}! Вы уже зарегистрированы.", reply_markup=assistant_keyboard())
-    else:
-        await state.set_state(RegistrationState.waiting_for_fio)
-        await message.answer("Здравствуйте! Пожалуйста, введите ваше ФИО для регистрации.")
+            await state.set_state(RegistrationState.waiting_for_fio)
+            await message.answer("Здравствуйте! Пожалуйста, введите ваше ФИО для регистрации.")
 
 
 @router.message(RegistrationState.waiting_for_fio, F.text)
@@ -45,8 +110,9 @@ async def process_fio(message: types.Message, state: FSMContext):
     Получает ФИО от пользователя, создает и добавляет пользователя в БД.
     """
     fio = message.text.strip()
-    user_id = message.from_user.id
-
+    # user_id = message.from_user.id
+    state_data = await state.get_data()
+    user_id = state_data.get('user_id')
     try:
         user = User.get_or_create(user_id) # Получаем или создаем пользователя
         user.fio = fio

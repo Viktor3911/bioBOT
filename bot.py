@@ -55,12 +55,12 @@ async def check_schedule_and_notify():
     logging.info('Фоновая задача рассылки напоминаний запущена')
     while True:
         now = datetime.now()
-        notification_time = now + timedelta(minutes=5) # Уведомление за 5 минут
 
         reservations_today = Reservation.get_all_by_today() # Получаем все резервации на сегодня
         for reservation in reservations_today:
             if reservation.start_date:
-                if abs(reservation.start_date - notification_time) < timedelta(minutes=1): # Проверяем, что время начала близко к времени уведомления (в пределах 1 минуты)
+                time_remaining = reservation.start_date - now
+                if timedelta(minutes=4) <= time_remaining <= timedelta(minutes=5): # Проверяем, что время до начала задачи между 4 и 5 минутами
                     for assistant_id in reservation.assistants:
                         try:
                             user = User.get_by_id(assistant_id)

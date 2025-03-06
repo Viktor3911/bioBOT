@@ -17,6 +17,7 @@ class AssistantState(StatesGroup):
     protocol_selected = State() # Новое состояние
     viewing_my_schedule = State() # Добавим состояние для просмотра расписания с кнопками действий
 
+
 def is_assistant(user_id: int) -> bool:
     """
     Проверяет, является ли пользователь ассистентом, проверяя его роль в БД.
@@ -25,6 +26,7 @@ def is_assistant(user_id: int) -> bool:
     if user and user.id_role == User.ROLE_ASSISTANT:
         return True
     return False
+
 
 async def format_assistant_task_info(reservation: Reservation) -> str:
     """
@@ -46,6 +48,7 @@ async def format_assistant_task_info(reservation: Reservation) -> str:
         f"<b>Устройство:</b> {device_name}\n"
     )
     return task_info
+
 
 async def format_protocol_schedule_info(reservations: list[Reservation]) -> str:
     """
@@ -76,18 +79,26 @@ async def wrapper_cmd_show_protocols_to_add(message: Message, state: FSMContext)
     user_id = message.from_user.id
     # Проверяем, есть ли у ассистента уже протокол на сегодня
     existing_protocol = Reservation.find_by_assistant_and_date(user_id, date.today())
+
     if existing_protocol:
         await message.answer("Вы уже добавили протокол на сегодня. Для просмотра вашего расписания нажмите кнопку 'Мое расписание'.", reply_markup=assistant_keyboard(has_protocol=True)) # Изменим клавиатуру
     else:
+        msg = await message.answer("0")
+        await state.update_data(msg_id_protocol_to_add=msg.message_id)
         await cmd_show_protocols_to_add(state, user_id)
+
+    await message.delete()
+
 
 async def cmd_show_protocols_to_add(state: FSMContext, user_id):
     """
     Обработчик показа списка протоколов для добавления ассистентом.
     Исключает протоколы, которые уже выбраны другими ассистентами.
     """
-    if not is_assistant(user_id):
-        return await dependencies.bot.send_message(chat_id=user_id, text="Только ассистенты могут использовать эту команду.")
+    state_data = await state.get_data()
+    msg_id_protocol_to_add = state_data.get('msg_id_protocol_to_add')
+    # if not is_assistant(user_id):
+    #     return await dependencies.bot.edit_message_text(chat_id=user_id, message_id=msg_id_protocol_to_add, text="Только ассистенты могут использовать эту команду.")
 
     await state.set_state(AssistantState.choosing_protocol_to_add)
     all_protocol_reservations_by_number = Reservation.get_all_by_today_with_protocol_numbers() # Получаем все протоколы на день
@@ -108,9 +119,9 @@ async def cmd_show_protocols_to_add(state: FSMContext, user_id):
             [InlineKeyboardButton(text=f"Протокол №{number_protocol}", callback_data=f"show_protocol_info_{number_protocol}")]
             for number_protocol, reservations in available_protocols # Используем отфильтрованный список
         ])
-        await dependencies.bot.send_message(chat_id=user_id, text="Выберите протоколы для добавления в свое расписание (по номеру протокола):", reply_markup=markup)
+        await dependencies.bot.edit_message_text(chat_id=user_id, message_id=msg_id_protocol_to_add, text="Выберите протоколы для добавления в свое расписание (по номеру протокола):", reply_markup=markup)
     else:
-        await dependencies.bot.send_message(chat_id=user_id, text="На сегодня нет доступных протоколов для добавления.", reply_markup=assistant_keyboard())
+        await dependencies.bot.edit_message_text(chat_id=user_id, message_id=msg_id_protocol_to_add, text="На сегодня нет доступных протоколов для добавления.", reply_markup=assistant_keyboard())
 
 
 @router.callback_query(AssistantState.choosing_protocol_to_add, F.data.startswith("show_protocol_info_"))
@@ -149,7 +160,6 @@ async def callback_show_protocol_info(query: CallbackQuery, state: FSMContext):
 async def callback_confirm_add_protocol(query: CallbackQuery, state: FSMContext):
     """
     Обработчик подтверждения добавления протокола ассистентом.
-    После подтверждения, кнопка "Добавить протоколы на день" исчезает.
     """
     state_data = await state.get_data()
     number_protocol = state_data.get('chosen_protocol_number')
@@ -157,7 +167,7 @@ async def callback_confirm_add_protocol(query: CallbackQuery, state: FSMContext)
     today_date = date.today()
 
     if number_protocol is None:
-        return await query.answer("Ошибка: номер протокола не найден.", show_alert=True)
+        return await query.message.edit_text("Ошибка: номер протокола не найден.", show_alert=True)
 
     protocol_reservations_by_number = Reservation.get_all_by_today_with_protocol_numbers()
     selected_reservations = []
@@ -171,7 +181,7 @@ async def callback_confirm_add_protocol(query: CallbackQuery, state: FSMContext)
             break
 
     if not selected_reservations:
-        return await query.answer(f"Резервации для протокола №{number_protocol} не найдены.", show_alert=True)
+        return await query.message.edit_text(f"Брони для протокола №{number_protocol} не найдены.", show_alert=True)
 
     added_to_protocol = False
     for reservation in selected_reservations:
@@ -207,8 +217,8 @@ async def cmd_view_my_schedule(message: Message, state: FSMContext):
     Обработчик кнопки "Мое расписание" для ассистента.
     Показывает расписание ассистента на день с кнопками действий для текущей задачи.
     """
-    if not is_assistant(message.from_user.id):
-        return await message.answer("Только ассистенты могут использовать эту команду.")
+    # if not is_assistant(message.from_user.id):
+    #     return await message.answer("Только ассистенты могут использовать эту команду.")
 
     user_id = message.from_user.id
     today_date = date.today()
@@ -250,9 +260,9 @@ async def cmd_view_my_schedule(message: Message, state: FSMContext):
                     InlineKeyboardButton(text="⏰ Опоздание - 10 мин", callback_data=f"delay_task_{current_task.id}"),
                     InlineKeyboardButton(text="↩️ Вернуть протокол", callback_data=f"return_protocol_{current_task.number_protocol}")
                 ],
-                [
-                    InlineKeyboardButton(text="🔄 Обновить расписание", callback_data="back_to_schedule")
-                ]
+                # [
+                #     InlineKeyboardButton(text="🔄 Обновить расписание", callback_data="back_to_schedule")
+                # ]
             ])
             await message.answer(schedule_info, parse_mode="HTML", reply_markup=markup)
             await state.set_state(AssistantState.viewing_my_schedule)
@@ -262,6 +272,8 @@ async def cmd_view_my_schedule(message: Message, state: FSMContext):
 
     await message.answer(schedule_info, parse_mode="HTML", reply_markup=assistant_keyboard(has_protocol=True)) # Передаем has_protocol=True, даже если нет задач, чтобы убрать кнопку "Добавить протоколы"
     await state.clear() # Сбрасываем состояние, если нет задач или кнопки действий не нужны
+
+    await message.delete()
 
 
 @router.callback_query(AssistantState.viewing_my_schedule, F.data.startswith("delay_task_"))
@@ -274,7 +286,7 @@ async def callback_delay_task(query: CallbackQuery, state: FSMContext):
     reservation_id = int(query.data.split("_")[2])
     delayed_reservation = Reservation.get_by_id(reservation_id)
     if not delayed_reservation:
-        return await query.answer("Задача не найдена.", show_alert=True)
+        return await query.message.edit_text("Задача не найдена.", show_alert=True)
 
     logging.info(f"Нажата кнопка 'Опоздание' для задачи ID: {reservation_id}, задача: {delayed_reservation.name_task}, протокол: {delayed_reservation.type_protocol}")
 
@@ -285,7 +297,7 @@ async def callback_delay_task(query: CallbackQuery, state: FSMContext):
     # 2. Получаем все протоколы на сегодня (вместе с резервациями, сгруппированные по номеру протокола)
     all_protocols_today_reservations = Reservation.get_all_by_today_with_protocol_numbers()
     if not all_protocols_today_reservations:
-        return await query.message.answer("На сегодня нет запланированных протоколов.", reply_markup=assistant_keyboard(has_protocol=True))
+        return await query.message.edit_text("На сегодня нет запланированных протоколов.")
 
     logging.info(f"Получены все протоколы на сегодня: {len(all_protocols_today_reservations)} протоколов")
 
@@ -293,7 +305,7 @@ async def callback_delay_task(query: CallbackQuery, state: FSMContext):
     Reservation.delete_all_by_today()
     logging.info("Все резервации на сегодня удалены из БД для перепланирования.")
 
-    await query.message.answer("Расписание на сегодня перепланируется с учетом задержки...", reply_markup=assistant_keyboard(has_protocol=True))
+    await query.message.edit_text("Расписание на сегодня перепланируется с учетом задержки...")
 
     total_tasks_rescheduled = 0
     tasks_not_scheduled = []
@@ -386,7 +398,7 @@ async def callback_delay_task(query: CallbackQuery, state: FSMContext):
         not_scheduled_tasks_str = "\n".join([f"- {task_name}" for task_name in tasks_not_scheduled])
         message_text += f"\n\n⚠️ Не удалось запланировать следующие задачи:\n{not_scheduled_tasks_str}"
 
-    await query.message.answer(message_text, reply_markup=assistant_keyboard(has_protocol=True))
+    await query.message.edit_text(message_text)
 
     await state.clear()
     await query.answer()
@@ -409,7 +421,7 @@ async def callback_return_protocol(query: CallbackQuery, state: FSMContext):
             break
 
     if not selected_reservations:
-        return await query.answer(f"Резервации для протокола №{number_protocol} не найдены.", show_alert=True)
+        return await query.message.edit_text(f"Резервации для протокола №{number_protocol} не найдены.", show_alert=True)
 
     protocol_returned = False
     for reservation in selected_reservations:
@@ -420,9 +432,8 @@ async def callback_return_protocol(query: CallbackQuery, state: FSMContext):
 
     if protocol_returned:
         await query.message.edit_text(f"Протокол №{number_protocol} возвращен в общий список.") # Возвращаем обычную клавиатуру
-        await query.answer("Протокол возвращен!", show_alert=False)
+        await query.message.edit_text("Протокол возвращен!", show_alert=False)
     else:
-        await query.answer(f"Не удалось вернуть протокол №{number_protocol} или вы не были к нему привязаны.", show_alert=True)
+        await query.message.edit_text(f"Не удалось вернуть протокол №{number_protocol} или вы не были к нему привязаны.", show_alert=True)
 
     await state.clear() # Сбрасываем состояние просмотра расписания
-    await cmd_show_protocols_to_add(state, query.from_user.id) # Показываем обновленный список протоколов

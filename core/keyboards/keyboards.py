@@ -8,7 +8,7 @@ def director_keyboard():
     keyboard = ReplyKeyboardMarkup(
         keyboard=[
             [
-                KeyboardButton(text="Добавить ...")  # Открывает подменю добавления
+                KeyboardButton(text="Добавить...")  # Открывает подменю добавления
             ],
             [
                 KeyboardButton(text="Добавить в расписание"),
@@ -32,18 +32,18 @@ def assistant_keyboard(has_protocol=False): # Добавим параметр ha
     # if not has_protocol: # Кнопка "Добавить протоколы на день" только если нет протокола
     buttons.insert(0, [KeyboardButton(text="Добавить протоколы на день")]) # Вставляем в начало списка
 
-    markup = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    markup = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=False)
     return markup
 
 
 def add_menu_keyboard():
     """
-    Создает InlineKeyboardMarkup для подменю кнопки "Добавить ...".
+    Создает InlineKeyboardMarkup для подменю кнопки "Добавить...".
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Кабинет", callback_data="add_cabinet")],
         [InlineKeyboardButton(text="Устройство", callback_data="add_device")],
         [InlineKeyboardButton(text="Задачу", callback_data="add_task")],
         [InlineKeyboardButton(text="Протокол", callback_data="add_protocol")],
-        [InlineKeyboardButton(text="⬅ Назад", callback_data="back_to_main")]
+        # [InlineKeyboardButton(text="⬅ Назад", callback_data="back_to_main")]
     ])
