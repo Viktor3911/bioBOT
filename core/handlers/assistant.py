@@ -266,6 +266,7 @@ async def cmd_view_my_schedule(message: Message, state: FSMContext):
             ])
             await message.answer(schedule_info, parse_mode="HTML", reply_markup=markup)
             await state.set_state(AssistantState.viewing_my_schedule)
+            await message.delete()
             return
     else:
         schedule_info += "На сегодня задач не запланировано."
